@@ -3,6 +3,7 @@ import { BOT_LEVEL_NAMES } from '../bots/bot';
 import type { ClientRoom } from '../net/client';
 import { useSubscribe } from './controllers';
 import { Icon, fmt } from './parts';
+import { DEFAULT_SETTINGS, VARIANT_NAMES, effectiveSettings } from '../settings';
 
 interface Props {
   code: string;
@@ -40,7 +41,7 @@ export function JoinScreen({ code, room, defaultName, onConnect, onRetry, onBack
   } else if (room.status === 'connecting') {
     body = <p style={{ margin: 0, fontSize: 15, color: 'var(--muted)' }}>Připojuji se ke stolu…</p>;
   } else if (room.status === 'waiting' || (room.status === 'playing' && !room.game)) {
-    const s = room.room?.settings;
+    const s = room.room ? effectiveSettings({ ...DEFAULT_SETTINGS, ...room.room.settings }) : null;
     const players = room.room?.players ?? [];
     body = (
       <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
@@ -57,7 +58,7 @@ export function JoinScreen({ code, room, defaultName, onConnect, onRetry, onBack
         </div>
         {s && (
           <span style={{ fontSize: 12, color: 'var(--muted)' }}>
-            {fmt(s.startStack)} žetonů · blindy {s.startBb / 2}/{s.startBb} · +1 level po {s.levelMinutes} min · {s.turnSeconds} s na tah
+            {VARIANT_NAMES[s.variant ?? "tournament"]}{s.gameChanger ? " + Game Changer" : ""} · {fmt(s.startStack)} žetonů · blindy {s.startBb / 2}/{s.startBb} · {s.variant === "cash" ? "blindy nerostou" : `+1 level po ${s.levelMinutes} min`} · {s.turnSeconds} s na tah
             {s.fillBots ? ` · volná místa doplní boti (${BOT_LEVEL_NAMES[Math.max(0, s.botLevel)].toLowerCase()})` : ''}
           </span>
         )}

@@ -54,6 +54,20 @@ describe('viewFor', () => {
     expect(JSON.stringify(v)).not.toContain('"seed":42');
   });
 
+  it('Odhalená karta: první karta soupeře je vidět, druhá ne', () => {
+    const g = sampleGame();
+    g.rules = { ...g.rules, revealFirst: true };
+    const other = viewFor(g, 'g1').players.find((p) => p.id === 'me')!;
+    expect(other.hole[0]).toEqual(g.players[0].hole[0]);
+    expect(other.hole[1].r).toBe(0);
+  });
+
+  it('Naslepo: před flopem nevidí hráč ani svoje karty', () => {
+    const g = sampleGame();
+    g.rules = { ...g.rules, hideOwnPreflop: true };
+    expect(viewFor(g, 'g1').players.find((p) => p.id === 'g1')!.hole.every((c) => c.r === 0)).toBe(true);
+  });
+
   it('otočené karty při showdownu vidí všichni', () => {
     const g = sampleGame();
     g.players[0].showCards = true;

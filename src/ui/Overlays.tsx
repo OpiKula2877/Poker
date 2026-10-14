@@ -100,16 +100,66 @@ export function EliminatedDialog({
   );
 }
 
-export function SpectatorBar({ place, onLeave }: { place: number | null; onLeave: () => void }) {
+export function SpectatorBar({ place, onLeave, onRebuy }: { place: number | null; onLeave: () => void; onRebuy?: () => void }) {
   return (
     <div className="specbar">
       <span style={{ color: 'var(--pixel-hot)', flexGrow: 0, display: 'flex' }}>{Icon.eye(20)}</span>
       <b style={{ fontSize: 15 }}>Díváš se</b>
-      <span>Tvoje umístění: {place}. místo. Vidíš jen karty, které se otočí na stole.</span>
+      <span>
+        {onRebuy ? 'Nemáš žetony. Dokup si, až budeš chtít hrát.' : `Tvoje umístění: ${place}. místo.`} Vidíš jen karty, které se otočí na stole.
+      </span>
+      {onRebuy && (
+        <button type="button" className="btn" style={{ height: 40, padding: '0 16px', fontSize: 13 }} onClick={onRebuy}>
+          Dokoupit
+        </button>
+      )}
       <button type="button" className="btn primary" style={{ height: 40, padding: '0 16px', fontSize: 13 }} onClick={onLeave}>
         {Icon.exit(16)} Opustit hru
       </button>
     </div>
+  );
+}
+
+/** Cash game: hráči došly žetony – dokoupit, dívat se, nebo odejít. */
+export function RebuyDialog({ game, onRebuy, onWatch, onLeave }: { game: GameState; onRebuy: () => void; onWatch: () => void; onLeave: () => void }) {
+  const heroId = useHeroId();
+  const hero = game.players.find((p) => p.id === heroId)!;
+  const spent = hero.buyIns * game.config.startStack;
+  return (
+    <>
+      <div className="scrim" />
+      <section className="dialog" role="dialog" aria-modal="true" aria-labelledby="rebuyTitle">
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+          <span className="kick">CASH GAME</span>
+          <h1 id="rebuyTitle">Došly ti žetony</h1>
+        </div>
+        <div className="stats">
+          <div className="stat">
+            <span>NÁKUPŮ</span>
+            <b>{hero.buyIns}</b>
+          </div>
+          <div className="stat">
+            <span>CELKEM NAKOUPENO</span>
+            <b>{fmt(spent)}</b>
+          </div>
+          <div className="stat">
+            <span>DALŠÍ NÁKUP</span>
+            <b>{fmt(game.config.startStack)}</b>
+          </div>
+        </div>
+        <button type="button" className="btn primary" onClick={onRebuy} autoFocus>
+          Dokoupit {fmt(game.config.startStack)}
+        </button>
+        <div className="two">
+          <button type="button" className="btn ghost" onClick={onWatch}>
+            {Icon.eye(20)} Dívat se
+          </button>
+          <button type="button" className="btn ghost" onClick={onLeave}>
+            {Icon.exit(20)} Opustit hru
+          </button>
+        </div>
+      </section>
+    </>
   );
 }
 

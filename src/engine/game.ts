@@ -1,14 +1,16 @@
 import { type Card, cardText, createRng, fullDeck, shuffle } from './cards';
-import { bestHand, describeHand, HAND_NAMES } from './evaluator';
+import { bestHandFor, describeHand, HAND_NAMES } from './evaluator';
+import { drawEvent, rulesForEvent } from './events';
 import { awardPots, computePots } from './pots';
+import { DEFAULT_RULES, type RoundRules } from './rules';
 
 export type Street = 'preflop' | 'flop' | 'turn' | 'river';
 /**
- * waiting   – před první rukou
+ * waiting   – před první rukou (v cash game i když u stolu chybí hráči)
  * betting   – někdo je na tahu (toActId)
  * roundEnd  – sázkové kolo skončilo, `advance` rozdá další karty nebo vyhodnotí ruku
  * handEnd   – ruka vyhodnocena (showdown), `startHand` začne další
- * gameOver  – zbyl jeden hráč
+ * gameOver  – zbyl jeden hráč (jen turnaj)
  */
 export type Phase = 'waiting' | 'betting' | 'roundEnd' | 'handEnd' | 'gameOver';
 
@@ -18,12 +20,26 @@ export interface BlindLevel {
   ante: number;
 }
 
+export type Variant = 'tournament' | 'cash';
+
+export interface GameChangerConfig {
+  /** Pravděpodobnost, že ruka dostane kartu (1 = každá ruka). */
+  chance: number;
+  /** Povolené karty; bez = všechny. */
+  events?: string[];
+}
+
 export interface GameConfig {
   seats: number;
   startStack: number;
   blinds: BlindLevel[];
   levelMinutes: number;
   turnSeconds: number;
+  /** Turnaj (vyřazování) nebo cash game (dokupování, blindy nerostou). */
+  variant?: Variant;
+  gameChanger?: GameChangerConfig | null;
+  /** Jak dlouho se ukazuje vylosovaná karta, než se začne hrát (ms). */
+  revealMs?: number;
 }
 
 export interface PlayerSetup {
@@ -48,10 +64,13 @@ export interface PlayerState {
   inHand: boolean;
   folded: boolean;
   allIn: boolean;
+  /** Turnaj: vyřazen. Cash game: bez žetonů, sedí mimo hru, dokud nedokoupí. */
   out: boolean;
   place: number | null;
   lastAction: string | null;
   showCards: boolean;
+  /** Kolikrát hráč koupil žetony (cash game; na začátku 1). */
+  buyIns: number;
 }
 
 export interface ShowdownHand {
@@ -72,7 +91,7 @@ export interface ShowdownInfo {
 
 export interface LogEntry {
   n: number;
-  kind: 'street' | 'action' | 'win' | 'info';
+  kind: 'street' | 'action' | 'win' | 'info' | 'event';
   who?: string;
   text: string;
 }
@@ -95,10 +114,16 @@ export interface GameState {
   deck: Card[];
   toActId: string | null;
   turnStartedAt: number;
+  handStartedAt: number;
   pending: string[];
   actedSinceFullRaise: string[];
   currentBet: number;
   minRaise: number;
+  /** Big blind této ruky (po případném zdvojení) – jednotka pro limit a min. sázku. */
+  betUnit: number;
+  raisesThisStreet: number;
+  /** Pravidla aktuální ruky (Game Changer). */
+  rules: RoundRules;
   showdown: ShowdownInfo | null;
   winnerId: string | null;
   log: LogEntry[];
@@ -194,6 +219,13 @@ export function currentBlinds(s: GameState): BlindLevel {
   return s.config.blinds[Math.min(s.level, s.config.blinds.length - 1)];
 }
 
+/** Čas na tah v aktuální ruce (Bleskové kolo ho zkracuje). */
+export function turnSecondsOf(s: GameState): number {
+  return s.rules.turnSeconds ?? s.config.turnSeconds;
+}
+
+export const isCash = (s: GameState) => s.config.variant === 'cash';
+
 function pay(p: PlayerState, amount: number): number {
   const a = Math.min(amount, p.stack);
   p.stack -= a;
@@ -223,6 +255,7 @@ export function createGame(config: GameConfig, setups: PlayerSetup[], seed: numb
     place: null,
     lastAction: null,
     showCards: false,
+    buyIns: 1,
   }));
   return {
     gameId: Math.random().toString(36).slice(2, 10),
@@ -241,10 +274,14 @@ export function createGame(config: GameConfig, setups: PlayerSetup[], seed: numb
     deck: [],
     toActId: null,
     turnStartedAt: now,
+    handStartedAt: now,
     pending: [],
     actedSinceFullRaise: [],
     currentBet: 0,
     minRaise: config.blinds[0].bb,
+    betUnit: config.blinds[0].bb,
+    raisesThisStreet: 0,
+    rules: DEFAULT_RULES,
     showdown: null,
     winnerId: null,
     log: [],
@@ -262,14 +299,23 @@ export function createGame(config: GameConfig, setups: PlayerSetup[], seed: numb
 export function startHand(prev: GameState, now: number, random?: () => number): GameState {
   const s = clone(prev);
   if (s.phase === 'gameOver') return s;
+  const cash = isCash(s);
 
-  while (now >= s.levelEndsAt && s.level < s.config.blinds.length - 1) {
-    s.level++;
-    s.levelEndsAt += s.config.levelMinutes * 60_000;
-    const b = currentBlinds(s);
-    addLog(s, 'info', `Level ${s.level + 1}: blindy ${fmt(b.sb)} / ${fmt(b.bb)}` + (b.ante ? `, ante ${fmt(b.ante)}` : ''));
+  // Cash game: hraje se, jen když jsou u stolu aspoň dva hráči se žetony.
+  if (s.players.filter((p) => !p.out).length < 2) {
+    s.phase = 'waiting';
+    return s;
   }
-  if (now >= s.levelEndsAt) s.levelEndsAt = now + s.config.levelMinutes * 60_000;
+
+  if (!cash) {
+    while (now >= s.levelEndsAt && s.level < s.config.blinds.length - 1) {
+      s.level++;
+      s.levelEndsAt += s.config.levelMinutes * 60_000;
+      const b = currentBlinds(s);
+      addLog(s, 'info', `Level ${s.level + 1}: blindy ${fmt(b.sb)} / ${fmt(b.bb)}` + (b.ante ? `, ante ${fmt(b.ante)}` : ''));
+    }
+    if (now >= s.levelEndsAt) s.levelEndsAt = now + s.config.levelMinutes * 60_000;
+  }
 
   s.handNo++;
   s.board = [];
@@ -289,8 +335,28 @@ export function startHand(prev: GameState, now: number, random?: () => number): 
   const active = s.players.filter((p) => !p.out);
   const rng = random ?? createRng((s.seed + Math.imul(s.handNo, 0x9e3779b1)) >>> 0);
 
+  addLog(s, 'street', `Ruka #${s.handNo}`);
+
+  // Game Changer karta pro tuto ruku.
+  const gc = s.config.gameChanger;
+  const event = gc ? drawEvent(rng, gc.chance, gc.events) : null;
+  s.rules = rulesForEvent(event, rng);
+  if (event) addLog(s, 'event', event.name, 'Game Changer');
+  if (event?.id === 'swapTwo' && active.length >= 2) {
+    const [a, b] = shuffle(active, rng);
+    [a.stack, b.stack] = [b.stack, a.stack];
+    addLog(s, 'event', `${a.name} a ${b.name} si prohodili žetony`);
+  } else if (event?.id === 'shuffleAll') {
+    const stacks = shuffle(
+      active.map((p) => p.stack),
+      rng,
+    );
+    active.forEach((p, i) => (p.stack = stacks[i]));
+    addLog(s, 'event', 'žetony všech hráčů se přeházely');
+  }
+
   // Dealer se posouvá na dalšího hráče ve hře.
-  if (!s.dealerId) s.dealerId = active[Math.floor(rng() * active.length)].id;
+  if (!s.dealerId || !byId(s, s.dealerId)) s.dealerId = active[Math.floor(rng() * active.length)].id;
   else s.dealerId = orderAfter(s, s.dealerId, (p) => !p.out)[0].id;
 
   if (active.length === 2) {
@@ -302,35 +368,44 @@ export function startHand(prev: GameState, now: number, random?: () => number): 
     s.bbId = after[1].id;
   }
 
-  s.deck = shuffle(fullDeck(), rng);
+  s.deck = shuffle(
+    fullDeck().filter((c) => !s.rules.shortDeck || c.r >= 6),
+    rng,
+  );
   const dealOrder = orderAfter(s, s.dealerId, (p) => !p.out);
-  for (let round = 0; round < 2; round++) for (const p of dealOrder) p.hole.push(s.deck.pop()!);
-
-  addLog(s, 'street', `Ruka #${s.handNo}`);
+  for (let round = 0; round < s.rules.holeCards; round++) for (const p of dealOrder) p.hole.push(s.deck.pop()!);
 
   const b = currentBlinds(s);
-  if (b.ante) {
+  const sbAmt = b.sb * s.rules.blindMult;
+  const bbAmt = b.bb * s.rules.blindMult;
+  const ante = b.ante + s.rules.anteBb * b.bb;
+  if (ante) {
     for (const p of active) {
-      pay(p, b.ante);
+      pay(p, ante);
       p.bet = 0; // ante jde rovnou do banku, nepočítá se do sázky v kole
     }
   }
   const sb = byId(s, s.sbId)!;
   const bb = byId(s, s.bbId)!;
-  pay(sb, b.sb);
+  if (!sb.allIn) pay(sb, sbAmt);
   sb.lastAction = 'SB ' + fmt(sb.bet);
-  pay(bb, b.bb);
+  if (!bb.allIn) pay(bb, bbAmt);
   bb.lastAction = 'BB ' + fmt(bb.bet);
   addLog(s, 'action', `small blind ${fmt(sb.bet)}`, sb.name);
   addLog(s, 'action', `big blind ${fmt(bb.bet)}`, bb.name);
 
-  s.currentBet = b.bb;
-  s.minRaise = b.bb;
+  s.currentBet = bbAmt;
+  s.minRaise = bbAmt;
+  s.betUnit = bbAmt;
+  s.raisesThisStreet = 0;
   s.actedSinceFullRaise = [];
   s.pending = orderAfter(s, s.bbId, canAct).map((p) => p.id);
   s.phase = 'betting';
   s.toActId = null;
+  s.handStartedAt = now;
   settle(s, s.bbId!, now);
+  // Vylosovaná karta se chvíli ukazuje; čas na tah běží až po ní.
+  if (event && s.phase === 'betting') s.turnStartedAt = now + (s.config.revealMs ?? 0);
   return s;
 }
 
@@ -339,9 +414,25 @@ export function legalActions(s: GameState, id: string): Legal | null {
   const p = byId(s, id)!;
   const callAmount = Math.min(s.currentBet - p.bet, p.stack);
   const othersCanAct = s.players.some((o) => o.id !== id && canAct(o));
-  const maxRaiseTo = p.bet + p.stack;
-  const minRaiseTo = Math.min(s.currentBet + s.minRaise, maxRaiseTo);
-  const canRaise = othersCanAct && maxRaiseTo > s.currentBet && !s.actedSinceFullRaise.includes(id);
+  const allInTo = p.bet + p.stack;
+  let maxRaiseTo = allInTo;
+  let minRaiseTo = Math.min(s.currentBet + s.minRaise, allInTo);
+  let canRaise = othersCanAct && allInTo > s.currentBet && !s.actedSinceFullRaise.includes(id);
+
+  switch (s.rules.betting) {
+    case 'limit':
+      minRaiseTo = maxRaiseTo = Math.min(s.currentBet + s.betUnit, allInTo);
+      canRaise &&= s.raisesThisStreet < 3;
+      break;
+    case 'pot':
+      maxRaiseTo = Math.min(allInTo, s.currentBet + potTotal(s) + callAmount);
+      minRaiseTo = Math.min(minRaiseTo, maxRaiseTo);
+      break;
+    case 'pushfold':
+      minRaiseTo = maxRaiseTo = allInTo;
+      break;
+  }
+
   return {
     canCheck: s.currentBet <= p.bet,
     canCall: s.currentBet > p.bet,
@@ -367,7 +458,8 @@ export function applyAction(prev: GameState, id: string, action: Action, now: nu
   let type = action.type;
   let to = action.type === 'raise' ? Math.floor(action.to) : 0;
   if (type === 'allin') {
-    to = p.bet + p.stack;
+    // V limitu a pot limitu znamená „all in“ maximální povolené navýšení.
+    to = legal.maxRaiseTo;
     if (to <= s.currentBet || !legal.canRaise) type = 'call';
     else type = 'raise';
   }
@@ -406,6 +498,7 @@ export function applyAction(prev: GameState, id: string, action: Action, now: nu
       } else if (!s.actedSinceFullRaise.includes(id)) {
         s.actedSinceFullRaise.push(id); // krátký all-in znovu neotevírá navyšování
       }
+      s.raisesThisStreet++;
       s.currentBet = to;
       s.pending = orderAfter(s, id, (o) => canAct(o) && o.id !== id).map((o) => o.id);
       p.lastAction = p.allIn ? 'All in' : wasBet ? 'Sází ' + fmt(to) : 'Na ' + fmt(to);
@@ -447,7 +540,7 @@ export function advance(prev: GameState, now: number): GameState {
   const s = clone(prev);
   for (const p of s.players) p.bet = 0;
 
-  if (s.players.filter(live).length <= 1 || s.street === 'river') {
+  if (s.players.filter(live).length <= 1 || s.street === 'river' || s.board.length >= s.rules.boardCards) {
     finishHand(s);
     return s;
   }
@@ -464,14 +557,15 @@ export function advance(prev: GameState, now: number): GameState {
     burnAndDeal(1);
   } else {
     s.street = 'river';
-    burnAndDeal(1);
+    burnAndDeal(Math.max(1, s.rules.boardCards - 4));
   }
   const names = { flop: 'Flop', turn: 'Turn', river: 'River' } as const;
   addLog(s, 'street', `${names[s.street as 'flop']}: ${s.board.map(cardText).join(' ')}`);
 
   for (const p of s.players) if (canAct(p) && p.lastAction !== 'All in') p.lastAction = null;
   s.currentBet = 0;
-  s.minRaise = currentBlinds(s).bb;
+  s.minRaise = s.betUnit;
+  s.raisesThisStreet = 0;
   s.actedSinceFullRaise = [];
   const actors = orderAfter(s, s.dealerId, canAct);
 
@@ -502,8 +596,8 @@ function finishHand(s: GameState) {
     scores.set(livePlayers[0].id, 1);
   } else {
     for (const p of livePlayers) {
-      const h = bestHand([...p.hole, ...s.board]);
-      scores.set(p.id, h.score);
+      const h = bestHandFor(p.hole, s.board, s.rules);
+      scores.set(p.id, h.strength);
       hands[p.id] = { cat: h.cat, name: describeHand(h), cards: h.cards, counted: h.counted };
       p.showCards = true;
     }
@@ -538,25 +632,39 @@ function finishHand(s: GameState) {
     p.lastAction = 'Vyhrává';
   }
 
-  // Vyřazení: kdo měl v ruce víc žetonů, skončí výš.
   const busted = s.players.filter((p) => !p.out && p.stack === 0).sort((a, b) => b.committed - a.committed);
-  const remaining = s.players.filter((p) => !p.out && p.stack > 0).length;
-  busted.forEach((p, i) => {
-    p.out = true;
-    p.place = remaining + 1 + i;
-    addLog(s, 'info', `${p.name} končí na ${p.place}. místě`);
-  });
+  if (isCash(s)) {
+    // Cash game: boti hned dokoupí, lidé si sednou mimo hru, dokud nedokoupí.
+    for (const p of busted) {
+      if (p.isBot) {
+        p.stack = s.config.startStack;
+        p.buyIns++;
+        addLog(s, 'info', `${p.name} dokupuje ${fmt(s.config.startStack)}`);
+      } else {
+        p.out = true;
+        addLog(s, 'info', `${p.name} nemá žetony`);
+      }
+    }
+  } else {
+    // Vyřazení: kdo měl v ruce víc žetonů, skončí výš.
+    const remaining = s.players.filter((p) => !p.out && p.stack > 0).length;
+    busted.forEach((p, i) => {
+      p.out = true;
+      p.place = remaining + 1 + i;
+      addLog(s, 'info', `${p.name} končí na ${p.place}. místě`);
+    });
+  }
 
   for (const p of s.players) {
     p.committed = 0;
     p.bet = 0;
   }
-  s.showdown = { uncontested, winners, refunds, hands, eliminated: busted.map((p) => p.id) };
+  s.showdown = { uncontested, winners, refunds, hands, eliminated: isCash(s) ? [] : busted.map((p) => p.id) };
   s.toActId = null;
   s.pending = [];
 
   const left = s.players.filter((p) => !p.out);
-  if (left.length <= 1) {
+  if (!isCash(s) && left.length <= 1) {
     s.phase = 'gameOver';
     s.winnerId = left[0]?.id ?? null;
     if (left[0]) {
@@ -568,7 +676,20 @@ function finishHand(s: GameState) {
   }
 }
 
-/** Celkový počet žetonů ve hře (stacky + vklady v ruce) – nemění se. */
+/** Cash game: hráč bez žetonů si znovu koupí počáteční stack. */
+export function rebuy(prev: GameState, id: string): GameState {
+  const p = byId(prev, id);
+  if (!isCash(prev) || !p || !p.out || p.stack > 0) return prev;
+  const s = clone(prev);
+  const q = byId(s, id)!;
+  q.out = false;
+  q.stack = s.config.startStack;
+  q.buyIns++;
+  addLog(s, 'info', `${q.name} dokupuje ${fmt(s.config.startStack)}`);
+  return s;
+}
+
+/** Celkový počet žetonů ve hře (stacky + vklady v ruce). V turnaji se nemění. */
 export function chipTotal(s: GameState): number {
   return s.players.reduce((sum, p) => sum + p.stack + p.committed, 0);
 }

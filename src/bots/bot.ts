@@ -1,21 +1,25 @@
 import { type Card, fullDeck } from '../engine/cards';
-import { bestHand } from '../engine/evaluator';
-import { type Action, type GameState, currentBlinds, legalActions, potTotal } from '../engine/game';
+import { bestHandFor } from '../engine/evaluator';
+import { type Action, type GameState, legalActions, potTotal } from '../engine/game';
+import { DEFAULT_RULES, type RoundRules } from '../engine/rules';
 
 export const BOT_LEVEL_NAMES = ['Lehký', 'Střední', 'Těžký'];
 
-/** Monte Carlo odhad šance na výhru (remíza se počítá podílem). */
+/** Monte Carlo odhad šance na výhru (remíza se počítá podílem) podle pravidel ruky. */
 export function estimateEquity(
   hole: Card[],
   board: Card[],
   opponents: number,
   iterations: number,
   rng: () => number,
+  rules: RoundRules = DEFAULT_RULES,
 ): number {
   if (opponents <= 0) return 1;
   const known = new Set([...hole, ...board].map((c) => c.r * 4 + 'shdc'.indexOf(c.s)));
-  const rest = fullDeck().filter((c) => !known.has(c.r * 4 + 'shdc'.indexOf(c.s)));
-  const need = 5 - board.length + opponents * 2;
+  const rest = fullDeck().filter((c) => !known.has(c.r * 4 + 'shdc'.indexOf(c.s)) && (!rules.shortDeck || c.r >= 6));
+  const boardSize = rules.boardCards;
+  const holeSize = rules.holeCards;
+  const need = Math.min(rest.length, Math.max(0, boardSize - board.length) + opponents * holeSize);
   let total = 0;
   for (let it = 0; it < iterations; it++) {
     // částečné zamíchání: stačí prvních `need` karet
@@ -27,12 +31,14 @@ export function estimateEquity(
     }
     let k = 0;
     const fullBoard = board.slice();
-    while (fullBoard.length < 5) fullBoard.push(rest[k++]);
-    const mine = bestHand([...hole, ...fullBoard]).score;
+    while (fullBoard.length < boardSize) fullBoard.push(rest[k++]);
+    const mine = bestHandFor(hole, fullBoard, rules).strength;
     let best = true;
     let ties = 0;
     for (let o = 0; o < opponents; o++) {
-      const score = bestHand([rest[k++], rest[k++], ...fullBoard]).score;
+      const opp = rest.slice(k, k + holeSize);
+      k += holeSize;
+      const score = bestHandFor(opp, fullBoard, rules).strength;
       if (score > mine) {
         best = false;
         break;
@@ -59,16 +65,21 @@ export function decideBotAction(s: GameState, id: string, rng: () => number): Ac
     const entered = others.filter((p) => p.lastAction && !/^(SB|BB) /.test(p.lastAction)).length;
     opponents = Math.max(1, Math.min(others.length, entered + Math.ceil((others.length - entered) * 0.3)));
   }
+  const rules = s.rules;
   const iterBase = [120, 250, 450][level] ?? 250;
-  const iterations = Math.max(60, Math.floor(iterBase / Math.max(1, Math.ceil(opponents / 2))));
+  // Víc karet = dražší vyhodnocení → méně simulací.
+  const cost = rules.omaha ? 3 : rules.holeCards > 2 || rules.boardCards > 5 ? 2 : 1;
+  const iterations = Math.max(40, Math.floor(iterBase / Math.max(1, Math.ceil(opponents / 2)) / cost));
 
-  let eq = estimateEquity(me.hole, s.board, opponents, iterations, rng);
+  const fair = 1 / (opponents + 1);
+  // Naslepo: bot svoje karty před flopem nezná.
+  const blindNow = rules.hideOwnPreflop && s.street === 'preflop';
+  let eq = blindNow ? fair : estimateEquity(me.hole, s.board, opponents, iterations, rng, rules);
   const noise = [0.12, 0.05, 0.02][level] ?? 0.05;
   eq = Math.min(1, Math.max(0, eq + (rng() * 2 - 1) * noise));
 
-  const fair = 1 / (opponents + 1);
   const pot = potTotal(s);
-  const bb = currentBlinds(s).bb;
+  const bb = s.betUnit;
   const stackBb = me.stack / bb;
   const potOdds = legal.callAmount / (pot + legal.callAmount || 1);
 
@@ -83,8 +94,15 @@ export function decideBotAction(s: GameState, id: string, rng: () => number): Ac
     return to >= legal.maxRaiseTo ? { type: 'allin' } : { type: 'raise', to };
   };
 
+  // All in nebo fold: sázka je vždy all in, takže jen se silnou rukou.
+  if (rules.betting === 'pushfold') {
+    if (legal.canRaise && eq > Math.min(0.8, fair * 1.7)) return { type: 'allin' };
+    if (legal.canCheck) return { type: 'check' };
+    return eq >= potOdds + callMargin + 0.05 ? { type: 'call' } : { type: 'fold' };
+  }
+
   // Krátký stack: all in nebo fold.
-  if (stackBb <= 10 && legal.canRaise) {
+  if (stackBb <= 10 && legal.canRaise && rules.betting === 'nl') {
     if (eq > fair * 1.3) return { type: 'allin' };
     return legal.canCheck ? { type: 'check' } : { type: 'fold' };
   }

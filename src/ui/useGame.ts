@@ -10,7 +10,9 @@ import {
   applyAction,
   createGame,
   legalActions,
+  rebuy,
   startHand,
+  turnSecondsOf,
 } from '../engine/game';
 
 export const HERO_ID = 'me';
@@ -100,7 +102,9 @@ export function useEngine(initial: () => GameState, opts: EngineOptions) {
       const id = g.toActId;
       const p = g.players.find((x) => x.id === id)!;
       if (p.isBot) {
-        const delay = fast ? 250 + rng() * 400 : 550 + rng() * 950;
+        // Během odhalení Game Changer karty bot počká, až ji všichni uvidí.
+        const reveal = Math.max(0, g.turnStartedAt - Date.now());
+        const delay = reveal + (fast ? 250 + rng() * 400 : 550 + rng() * 950);
         timer = setTimeout(() => setGame((x) => (x.phase === 'betting' && x.toActId === id ? tryApply(x, id, decideBotAction(x, id, rng)) : x)), delay);
       } else {
         const legal = legalActions(g, id);
@@ -112,7 +116,7 @@ export function useEngine(initial: () => GameState, opts: EngineOptions) {
             setGame((x) => tryApply(x, id, a));
           }, 250);
         } else {
-          let left = g.config.turnSeconds * 1000 - (Date.now() - g.turnStartedAt);
+          let left = turnSecondsOf(g) * 1000 - (Date.now() - g.turnStartedAt);
           if (optsRef.current.isAway?.(id)) left = Math.min(left, 2500);
           timer = setTimeout(
             () =>
@@ -130,6 +134,7 @@ export function useEngine(initial: () => GameState, opts: EngineOptions) {
   }, [game, paused, heroOut, preAction, heroId, opts.awayKey]);
 
   const actFor = useCallback((id: string, a: Action) => setGame((x) => tryApply(x, id, a)), []);
+  const rebuyFor = useCallback((id: string) => setGame((x) => rebuy(x, id)), []);
   const act = useCallback((a: Action) => actFor(heroId, a), [actFor, heroId]);
 
   const togglePause = useCallback(() => {
@@ -150,7 +155,7 @@ export function useEngine(initial: () => GameState, opts: EngineOptions) {
     setPreAction(null);
   }, []);
 
-  return { game, act, actFor, paused, togglePause, preAction, setPreAction, reset };
+  return { game, act, actFor, rebuyFor, paused, togglePause, preAction, setPreAction, reset };
 }
 
 // ---------- statistiky hráče ----------

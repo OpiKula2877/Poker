@@ -1,9 +1,12 @@
 import { type GameConfig, makeBlindLevels } from './engine/game';
 
 export type PlayMode = 'bots' | 'link';
+export type GameVariant = 'tournament' | 'sitngo' | 'cash';
 
 export interface Settings {
   mode: PlayMode;
+  /** Turnaj, Sit & Go turbo (rychlý turnaj), nebo cash game s dokupováním. */
+  variant: GameVariant;
   name: string;
   seats: number;
   startStack: number;
@@ -14,10 +17,17 @@ export interface Settings {
   botLevel: number;
   /** Online: volná místa doplnit boty. */
   fillBots: boolean;
+  /** Game Changer: každou ruku může změnit vylosovaná karta. */
+  gameChanger: boolean;
+  /** Jak často ruka dostane kartu (0–1). */
+  gcChance: number;
+  /** Trénink: nápověda se šancí na výhru a doporučením (jen proti botům). */
+  hints: boolean;
 }
 
 export const DEFAULT_SETTINGS: Settings = {
   mode: 'bots',
+  variant: 'tournament',
   name: 'Ty',
   seats: 9,
   startStack: 10000,
@@ -26,15 +36,37 @@ export const DEFAULT_SETTINGS: Settings = {
   turnSeconds: 20,
   botLevel: 1,
   fillBots: true,
+  gameChanger: false,
+  gcChance: 0.5,
+  hints: false,
 };
 
-export function settingsToConfig(s: Settings, seats: number): GameConfig {
+/** Sit & Go turbo: krátký turnaj s pevným nastavením. */
+export const SITNGO = { startStack: 1500, startBb: 20, levelMinutes: 3 };
+
+export const VARIANT_NAMES: Record<GameVariant, string> = {
+  tournament: 'Turnaj',
+  sitngo: 'Sit & Go turbo',
+  cash: 'Cash game',
+};
+
+/** Hodnoty, které se ve hře opravdu použijí (Sit & Go má vlastní předvolbu). */
+export function effectiveSettings(s: Settings): Settings {
+  return s.variant === 'sitngo' ? { ...s, ...SITNGO } : s;
+}
+
+export function settingsToConfig(raw: Settings, seats: number): GameConfig {
+  const s = effectiveSettings(raw);
+  const cash = s.variant === 'cash';
   return {
     seats,
     startStack: s.startStack,
     blinds: makeBlindLevels(s.startBb),
     levelMinutes: s.levelMinutes,
     turnSeconds: s.turnSeconds,
+    variant: cash ? 'cash' : 'tournament',
+    gameChanger: s.gameChanger ? { chance: s.gcChance } : null,
+    revealMs: 2600,
   };
 }
 

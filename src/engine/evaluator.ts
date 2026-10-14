@@ -35,8 +35,27 @@ export interface HandValue {
   cards: Card[];
   /** Kolik prvních karet z `cards` kombinaci tvoří (zbytek jsou kickery). */
   counted: number;
-  /** Číslo pro porovnání: větší = silnější. */
+  /** Síla podle běžných pravidel: větší = silnější. */
   score: number;
+  /** Síla podle pravidel ruky (Game Changer); bez nich = score. Porovnává se tímto. */
+  strength: number;
+}
+
+/** Co z pravidel ruky ovlivňuje vyhodnocení. */
+export interface EvalRules {
+  catRank?: number[] | null;
+  lowball?: boolean;
+  ignoreSuits?: boolean;
+  omaha?: boolean;
+}
+
+const CAT_UNIT = 15 ** 5;
+
+export function strengthOf(v: { cat: number; score: number }, r?: EvalRules): number {
+  let s = v.score;
+  if (r?.catRank) s = r.catRank[v.cat] * CAT_UNIT + (v.score - v.cat * CAT_UNIT);
+  if (r?.lowball) s = -s;
+  return s;
 }
 
 const COUNTED_BY_CAT = [1, 2, 4, 3, 5, 5, 5, 4, 5, 5];
@@ -48,7 +67,7 @@ function scoreOf(cat: number, ranks: number[]): number {
 }
 
 /** Ohodnotí 1–5 karet (méně než 5 jen podle shod – pro náhled před flopem). */
-export function evaluate5(cards: Card[]): HandValue {
+export function evaluate5(cards: Card[], ignoreSuits = false): HandValue {
   const n = cards.length;
   const byRank = new Map<number, Card[]>();
   for (const c of cards) {
@@ -59,7 +78,7 @@ export function evaluate5(cards: Card[]): HandValue {
   const groups = [...byRank.entries()].sort((a, b) => b[1].length - a[1].length || b[0] - a[0]);
   const desc = cards.slice().sort((a, b) => b.r - a.r);
 
-  const flush = n === 5 && cards.every((c) => c.s === cards[0].s);
+  const flush = !ignoreSuits && n === 5 && cards.every((c) => c.s === cards[0].s);
   let straightHigh = 0;
   if (n === 5 && groups.length === 5) {
     if (desc[0].r - desc[4].r === 4) straightHigh = desc[0].r;
@@ -103,18 +122,26 @@ export function evaluate5(cards: Card[]): HandValue {
     }
   }
 
+  const score = scoreOf(cat, ranks);
   return {
     cat,
     ranks,
     cards: ordered,
     counted: Math.min(COUNTED_BY_CAT[cat], n),
-    score: scoreOf(cat, ranks),
+    score,
+    strength: score,
   };
 }
 
-/** Nejlepší ruka z libovolného počtu karet (5 z N). */
-export function bestHand(cards: Card[]): HandValue {
-  if (cards.length <= 5) return evaluate5(cards);
+function withStrength(v: HandValue, r?: EvalRules): HandValue {
+  if (!r?.catRank && !r?.lowball) return v;
+  return { ...v, strength: strengthOf(v, r) };
+}
+
+/** Nejlepší ruka z libovolného počtu karet (5 z N) podle pravidel ruky. */
+export function bestHand(cards: Card[], r?: EvalRules): HandValue {
+  const ignore = !!r?.ignoreSuits;
+  if (cards.length <= 5) return withStrength(evaluate5(cards, ignore), r);
   let best: HandValue | null = null;
   const n = cards.length;
   const pick: Card[] = new Array(5);
@@ -128,8 +155,26 @@ export function bestHand(cards: Card[]): HandValue {
             pick[2] = cards[c];
             pick[3] = cards[d];
             pick[4] = cards[e];
-            const v = evaluate5(pick);
-            if (!best || v.score > best.score) best = v;
+            const v = withStrength(evaluate5(pick, ignore), r);
+            if (!best || v.strength > best.strength) best = v;
+          }
+  return best!;
+}
+
+/** Nejlepší ruka hráče: karty v ruce + na stole (Omaha = přesně 2 z ruky a 3 ze stolu). */
+export function bestHandFor(hole: Card[], board: Card[], r?: EvalRules): HandValue {
+  if (!r?.omaha || board.length < 3 || hole.length < 2) {
+    if (r?.omaha && board.length < 3) return bestHand(hole, r);
+    return bestHand([...hole, ...board], r);
+  }
+  let best: HandValue | null = null;
+  for (let i = 0; i < hole.length; i++)
+    for (let j = i + 1; j < hole.length; j++)
+      for (let a = 0; a < board.length; a++)
+        for (let b = a + 1; b < board.length; b++)
+          for (let c = b + 1; c < board.length; c++) {
+            const v = withStrength(evaluate5([hole[i], hole[j], board[a], board[b], board[c]], !!r.ignoreSuits), r);
+            if (!best || v.strength > best.strength) best = v;
           }
   return best!;
 }

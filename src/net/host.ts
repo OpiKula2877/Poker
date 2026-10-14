@@ -45,6 +45,8 @@ export class HostRoom {
   chat: ChatMsg[] = [];
   /** Herní smyčka si sem zaregistruje příjem akcí. */
   onAction?: (playerId: string, action: Action) => void;
+  /** Cash game: hráč chce dokoupit žetony. */
+  onRebuy?: (playerId: string) => void;
 
   private settings: Settings;
   private peer: Peer | null = null;
@@ -162,6 +164,7 @@ export class HostRoom {
     if (msg.t === 'action') this.onAction?.(guest.id, msg.action);
     else if (msg.t === 'chat') this.addChat(guest.name, msg.text);
     else if (msg.t === 'leave') this.handleClose(conn);
+    else if (msg.t === 'rebuy') this.onRebuy?.(guest.id);
   }
 
   /** Kdo se dlouho neozval, je odpojený (zavřená karta se přes WebRTC nemusí ohlásit hned). */

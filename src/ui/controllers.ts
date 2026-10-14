@@ -21,6 +21,10 @@ export interface GameController {
   away: Set<string>;
   chat?: { messages: ChatMsg[]; send: (text: string) => void };
   online?: { code: string; role: 'host' | 'guest' };
+  /** Trénink: ukazovat nápovědu. */
+  hints?: boolean;
+  /** Cash game: dokoupit žetony. */
+  rebuy?: () => void;
 }
 
 /** Překreslí komponentu při každé změně stolu / připojení. */
@@ -48,6 +52,8 @@ export function useLocalController(settings: Settings): GameController {
     stats,
     restart: () => engine.reset(make()),
     away,
+    hints: settings.hints,
+    rebuy: () => engine.rebuyFor(HERO_ID),
   };
 }
 
@@ -69,13 +75,15 @@ export function useHostController(room: HostRoom, settings: Settings): GameContr
     awayKey: [...away].sort().join(),
     onState: (g, paused) => room.broadcastState(g, paused),
   });
-  const { actFor } = engine;
+  const { actFor, rebuyFor } = engine;
   useEffect(() => {
     room.onAction = actFor;
+    room.onRebuy = rebuyFor;
     return () => {
       room.onAction = undefined;
+      room.onRebuy = undefined;
     };
-  }, [room, actFor]);
+  }, [room, actFor, rebuyFor]);
   const stats = useHeroStats(engine.game, HOST_PLAYER_ID);
   return {
     game: engine.game,
@@ -90,6 +98,7 @@ export function useHostController(room: HostRoom, settings: Settings): GameContr
     away,
     chat: { messages: room.chat, send: (t) => room.addChat(room.hostName, t) },
     online: { code: room.code, role: 'host' },
+    rebuy: () => rebuyFor(HOST_PLAYER_ID),
   };
 }
 
@@ -127,5 +136,6 @@ export function useClientController(room: ClientRoom): GameController {
     away,
     chat: { messages: room.chat, send: (t) => room.sendChat(t) },
     online: { code: room.code, role: 'guest' },
+    rebuy: () => room.sendRebuy(),
   };
 }

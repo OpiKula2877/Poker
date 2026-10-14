@@ -2,7 +2,8 @@ import { useState } from 'react';
 import { BOT_LEVEL_NAMES } from '../bots/bot';
 import { HOST_PLAYER_ID, type HostRoom } from '../net/host';
 import { joinLink } from '../net/protocol';
-import type { PlayMode, Settings } from '../settings';
+import { EVENTS } from '../engine/events';
+import { type GameVariant, type PlayMode, type Settings, VARIANT_NAMES, effectiveSettings } from '../settings';
 import { useSubscribe } from './controllers';
 import { ChipStack, Icon, fmt } from './parts';
 
@@ -138,7 +139,7 @@ function HostPanel({ host, st, set, onCreateRoom, onCloseRoom, onStartHost }: { 
       </label>
       <SeatList rows={rows} />
       <button type="button" className="btn primary" style={{ height: 56 }} disabled={total < 2} onClick={onStartHost}>
-        Spustit turnaj ({total} {total >= 5 ? 'hráčů' : 'hráči'})
+        {st.variant === "cash" ? "Spustit hru" : "Spustit turnaj"} ({total} {total >= 5 ? 'hráčů' : 'hráči'})
       </button>
       <button type="button" className="tb" style={{ alignSelf: 'center' }} onClick={onCloseRoom}>
         Zavřít stůl
@@ -147,9 +148,36 @@ function HostPanel({ host, st, set, onCreateRoom, onCloseRoom, onStartHost }: { 
   );
 }
 
-export function Lobby({ settings: st, onChange, onStartLocal, host, onCreateRoom, onCloseRoom, onStartHost }: Props) {
-  const set = (patch: Partial<Settings>) => onChange({ ...st, ...patch });
+const VARIANT_HINTS: Record<GameVariant, string> = {
+  tournament: 'Klasický turnaj: blindy rostou, kdo přijde o žetony, vypadává. Vyhrává poslední u stolu.',
+  sitngo: 'Rychlý turnaj na zhruba 20 minut: 1 500 žetonů, blindy 10/20 a nový level každé 3 minuty.',
+  cash: 'Bez vyřazování: blindy nerostou a kdo přijde o žetony, může si dokoupit. Hraje se, dokud chcete.',
+};
+
+const GC_CHANCES: [number, string][] = [
+  [1, 'Každá ruka'],
+  [0.5, 'Často'],
+  [0.25, 'Občas'],
+];
+
+function Switch({ on, onToggle, label }: { on: boolean; onToggle: () => void; label: string }) {
+  return (
+    <button type="button" role="switch" aria-checked={on} className="swrow" onClick={onToggle}>
+      <span className={'sw' + (on ? ' on' : '')}>
+        <i />
+      </span>
+      {label}
+    </button>
+  );
+}
+
+export function Lobby({ settings: raw, onChange, onStartLocal, host, onCreateRoom, onCloseRoom, onStartHost }: Props) {
+  const set = (patch: Partial<Settings>) => onChange({ ...raw, ...patch });
   const seg = (on: boolean) => 'seg' + (on ? ' on' : '');
+  // Sit & Go má pevné hodnoty – ukazují se, ale nejdou měnit.
+  const st = effectiveSettings(raw);
+  const fixed = raw.variant === 'sitngo';
+  const cash = raw.variant === 'cash';
   const bb = st.startBb;
   const botLevelName = (i: number) => BOT_LEVEL_NAMES[st.botLevel < 0 ? i % 3 : st.botLevel].toLowerCase();
   const setMode = (mode: PlayMode) => {
@@ -168,13 +196,13 @@ export function Lobby({ settings: st, onChange, onStartLocal, host, onCreateRoom
       </header>
 
       <main>
-        <div style={{ flex: 1.35, display: 'flex', flexDirection: 'column', gap: 24, minWidth: 0 }}>
+        <div style={{ flex: 1.35, display: 'flex', flexDirection: 'column', gap: 18, minWidth: 0 }}>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-            <span style={{ fontSize: 13, fontWeight: 700, letterSpacing: '0.08em', color: 'var(--accent)' }}>TEXAS HOLD'EM · TURNAJ</span>
-            <h1 style={{ margin: 0, fontSize: 44, lineHeight: 1.05, letterSpacing: '-0.02em' }}>Založit stůl</h1>
-            <p style={{ margin: 0, fontSize: 15, lineHeight: 1.65, color: 'var(--muted)' }}>
-              Nastav pravidla a začni. Vyhrává ten, kdo zůstane u stolu poslední.
-            </p>
+            <span style={{ fontSize: 13, fontWeight: 700, letterSpacing: '0.08em', color: 'var(--accent)' }}>
+              TEXAS HOLD'EM · {VARIANT_NAMES[st.variant].toUpperCase()}
+              {st.gameChanger ? ' · GAME CHANGER' : ''}
+            </span>
+            <h1 style={{ margin: 0, fontSize: 40, lineHeight: 1.05, letterSpacing: '-0.02em' }}>Založit stůl</h1>
           </div>
 
           <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
@@ -195,6 +223,39 @@ export function Lobby({ settings: st, onChange, onStartLocal, host, onCreateRoom
                 <span className="md">Server běží u tebe doma nebo v síti, ostatní se připojí na adresu.</span>
               </button>
             </div>
+          </div>
+
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+            <p className="lab">HERNÍ MÓD</p>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              {(Object.keys(VARIANT_NAMES) as GameVariant[]).map((v) => (
+                <button key={v} type="button" className={seg(st.variant === v)} onClick={() => set({ variant: v })} title={VARIANT_HINTS[v]}>
+                  {VARIANT_NAMES[v]}
+                </button>
+              ))}
+              <span style={{ flexGrow: 1 }} />
+              {st.mode === 'bots' && (
+                <Switch on={st.hints} onToggle={() => set({ hints: !st.hints })} label="Trénink s nápovědou" />
+              )}
+            </div>
+            <span style={{ fontSize: 12, color: 'var(--muted)' }}>{VARIANT_HINTS[st.variant]}</span>
+          </div>
+
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+            <p className="lab">GAME CHANGER</p>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <Switch on={st.gameChanger} onToggle={() => set({ gameChanger: !st.gameChanger })} label={st.gameChanger ? 'Zapnuto' : 'Vypnuto'} />
+              <span style={{ width: 12 }} />
+              {GC_CHANCES.map(([v, label]) => (
+                <button key={v} type="button" className={seg(st.gcChance === v)} disabled={!st.gameChanger} onClick={() => set({ gcChance: v })}>
+                  {label}
+                </button>
+              ))}
+            </div>
+            <span style={{ fontSize: 12, color: 'var(--muted)' }}>
+              Před rukou se vylosuje karta, která na jedno kolo změní pravidla: obrácené pořadí kombinací, šestá karta na stole, Omaha, prohození
+              žetonů… celkem {EVENTS.length} karet.
+            </span>
           </div>
 
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 24 }}>
@@ -227,7 +288,7 @@ export function Lobby({ settings: st, onChange, onStartLocal, host, onCreateRoom
             <p className="lab">POČÁTEČNÍ ŽETONY PRO KAŽDÉHO</p>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
               {STACKS.map((v) => (
-                <button key={v} type="button" className={seg(st.startStack === v)} onClick={() => set({ startStack: v })}>
+                <button key={v} type="button" className={seg(st.startStack === v)} disabled={fixed} onClick={() => set({ startStack: v })}>
                   {fmt(v)}
                 </button>
               ))}
@@ -236,6 +297,7 @@ export function Lobby({ settings: st, onChange, onStartLocal, host, onCreateRoom
                 type="number"
                 min={100}
                 step={100}
+                disabled={fixed}
                 value={st.startStack}
                 onChange={(e) => {
                   const v = Number(e.target.value);
@@ -255,17 +317,17 @@ export function Lobby({ settings: st, onChange, onStartLocal, host, onCreateRoom
               <p className="lab">BLINDY NA ZAČÁTKU</p>
               <div style={{ display: 'flex', gap: 8 }}>
                 {BLINDS.map(([s, b]) => (
-                  <button key={b} type="button" className={seg(st.startBb === b)} onClick={() => set({ startBb: b })}>
+                  <button key={b} type="button" className={seg(st.startBb === b)} disabled={fixed} onClick={() => set({ startBb: b })}>
                     {s} / {b}
                   </button>
                 ))}
               </div>
             </div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-              <p className="lab">ZVÝŠENÍ BLINDŮ KAŽDÝCH</p>
+              <p className="lab">{cash ? "BLINDY NEROSTOU (CASH GAME)" : "ZVÝŠENÍ BLINDŮ KAŽDÝCH"}</p>
               <div style={{ display: 'flex', gap: 8 }}>
                 {LEVELS.map((m) => (
-                  <button key={m} type="button" className={seg(st.levelMinutes === m)} onClick={() => set({ levelMinutes: m })}>
+                  <button key={m} type="button" className={seg(st.levelMinutes === m && !cash)} disabled={fixed || cash} onClick={() => set({ levelMinutes: m })}>
                     {m} min
                   </button>
                 ))}
@@ -326,12 +388,12 @@ export function Lobby({ settings: st, onChange, onStartLocal, host, onCreateRoom
                 )}
               />
               <button type="button" className="btn primary" style={{ height: 56 }} onClick={onStartLocal} autoFocus>
-                Spustit turnaj
+                {cash ? "Spustit hru" : "Spustit turnaj"}
               </button>
             </>
           )}
           <span style={{ fontSize: 12, color: 'var(--muted)', textAlign: 'center' }}>
-            {fmt(st.startStack)} žetonů · blindy {bb / 2}/{bb} · +1 level po {st.levelMinutes} min
+            {fmt(st.startStack)} žetonů · blindy {bb / 2}/{bb} · {cash ? "blindy nerostou" : `+1 level po ${st.levelMinutes} min`}{st.gameChanger ? " · Game Changer" : ""}
           </span>
         </aside>
       </main>

@@ -131,7 +131,12 @@ export class ClientRoom {
       case 'state': {
         // Časy hostitele převedeme na hodiny tohoto zařízení.
         const offset = Date.now() - msg.hostNow;
-        this.game = { ...msg.game, turnStartedAt: msg.game.turnStartedAt + offset, levelEndsAt: msg.game.levelEndsAt + offset };
+        this.game = {
+          ...msg.game,
+          turnStartedAt: msg.game.turnStartedAt + offset,
+          handStartedAt: msg.game.handStartedAt + offset,
+          levelEndsAt: msg.game.levelEndsAt + offset,
+        };
         this.paused = msg.paused;
         if (this.status === 'waiting' || this.status === 'connecting') this.status = 'playing';
         break;
@@ -157,6 +162,10 @@ export class ClientRoom {
 
   sendAction(action: Action) {
     this.send({ t: 'action', action });
+  }
+
+  sendRebuy() {
+    this.send({ t: 'rebuy' });
   }
 
   sendChat(text: string) {

@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
-import { type Action, type GameState, currentBlinds, legalActions, potTotal } from '../engine/game';
+import type { Advice } from '../bots/hints';
+import { type Action, type GameState, currentBlinds, legalActions, potTotal, turnSecondsOf } from '../engine/game';
 import { type PreAction, useHeroId } from './useGame';
 import { fmt } from './parts';
 
@@ -9,9 +10,11 @@ interface Props {
   act: (a: Action) => void;
   preAction: PreAction;
   setPreAction: (p: PreAction) => void;
+  /** Trénink: doporučený tah se zvýrazní. */
+  advice?: Advice | null;
 }
 
-export function ActionDock({ game, now, act, preAction, setPreAction }: Props) {
+export function ActionDock({ game, now, act, preAction, setPreAction, advice }: Props) {
   const heroId = useHeroId();
   const hero = game.players.find((p) => p.id === heroId)!;
   const legal = legalActions(game, heroId);
@@ -69,7 +72,7 @@ export function ActionDock({ game, now, act, preAction, setPreAction }: Props) {
   }, []);
 
   const elapsed = Math.max(0, now - game.turnStartedAt);
-  const secondsLeft = Math.max(0, Math.ceil((game.config.turnSeconds * 1000 - elapsed) / 1000));
+  const secondsLeft = Math.max(0, Math.ceil((turnSecondsOf(game) * 1000 - elapsed) / 1000));
   const toActName = game.players.find((p) => p.id === game.toActId)?.name;
   const inHand = hero.inHand && !hero.folded && !hero.allIn && !hero.out;
 
@@ -95,7 +98,17 @@ export function ActionDock({ game, now, act, preAction, setPreAction }: Props) {
     sub = `V banku ${fmt(pot)}`;
   }
 
-  const raiseLabel = !legal || !legal.canRaise ? 'Navýšit' : isAllInRaise ? 'All in' : (legal.currentBet === 0 ? 'Sázet ' : 'Navýšit na ') + fmt(to);
+  const betting = game.rules.betting;
+  // Limit a pot limit: tlačítko „all in“ znamená nejvyšší povolené navýšení.
+  const capped = (betting === 'limit' || betting === 'pot') && !!legal && legal.maxRaiseTo < hero.stack + hero.bet;
+  const fixedNote =
+    betting === 'pushfold'
+      ? 'All in nebo fold: jiné navýšení teď nejde.'
+      : betting === 'limit'
+        ? `Limit kolo: navýšení jen o ${fmt(game.betUnit)}.`
+        : 'Navýšit jde jen o tuto částku.';
+
+  const raiseLabel = !legal || !legal.canRaise ? 'Navýšit' : isAllInRaise && !capped ? 'All in' : (legal.currentBet === 0 ? 'Sázet ' : 'Navýšit na ') + fmt(to);
   const callLabel = !legal ? 'Dorovnat' : legal.canCheck ? 'Check' : legal.callAmount >= hero.stack ? `All in ${fmt(legal.callAmount)}` : `Dorovnat ${fmt(legal.callAmount)}`;
 
   return (
@@ -105,7 +118,9 @@ export function ActionDock({ game, now, act, preAction, setPreAction }: Props) {
           <b>{title}</b>
           <span>{sub}</span>
         </div>
-        {myTurn && legal?.canRaise ? (
+        {myTurn && legal?.canRaise && legal.minRaiseTo === legal.maxRaiseTo ? (
+          <span style={{ fontSize: 12, color: "var(--muted)" }}>{fixedNote}</span>
+        ) : myTurn && legal?.canRaise ? (
           <>
             {presets.map(([label, v]) => (
               <button key={label} type="button" className={'pre' + (v === to ? ' on' : '')} onClick={() => setAmount(v)}>
@@ -154,17 +169,17 @@ export function ActionDock({ game, now, act, preAction, setPreAction }: Props) {
         )}
       </div>
       <div className="btns">
-        <button type="button" className="btn ghost" disabled={!myTurn} onClick={doFold}>
+        <button type="button" className={'btn ghost' + (advice === 'fold' ? ' advice' : '')} disabled={!myTurn} onClick={doFold}>
           Fold <kbd>F</kbd>
         </button>
-        <button type="button" className="btn" disabled={!myTurn} onClick={doCall}>
+        <button type="button" className={'btn' + (advice === 'check' || advice === 'call' ? ' advice' : '')} disabled={!myTurn} onClick={doCall}>
           {callLabel} <kbd>C</kbd>
         </button>
-        <button type="button" className="btn primary" disabled={!myTurn || !legal?.canRaise} onClick={doRaise}>
+        <button type="button" className={'btn primary' + (advice === 'raise' ? ' advice' : '')} disabled={!myTurn || !legal?.canRaise} onClick={doRaise}>
           {raiseLabel} <kbd>R</kbd>
         </button>
         <button type="button" className="btn allin" disabled={!myTurn} onClick={doAllIn}>
-          All in {fmt(hero.stack + hero.bet)} <kbd>A</kbd>
+          {capped && legal ? `Max ${fmt(legal.maxRaiseTo)}` : `All in ${fmt(hero.stack + hero.bet)}`} <kbd>A</kbd>
         </button>
       </div>
     </section>

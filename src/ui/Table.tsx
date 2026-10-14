@@ -1,9 +1,12 @@
 import { useMemo, useState } from 'react';
-import { type Card, cardId } from '../engine/cards';
-import { HAND_NAMES, bestHand } from '../engine/evaluator';
-import { type GameState, type PlayerState, currentBlinds, potTotal } from '../engine/game';
+import { type Card, cardId, createRng } from '../engine/cards';
+import { computeHint } from '../bots/hints';
+import { HAND_NAMES, bestHandFor } from '../engine/evaluator';
+import { GameChangerLayer } from './GameChanger';
+import { HintPanel } from './HintPanel';
+import { type GameState, type PlayerState, currentBlinds, isCash, potTotal, turnSecondsOf } from '../engine/game';
 import { ActionDock } from './ActionDock';
-import { EliminatedDialog, GameOverDialog, SpectatorBar } from './Overlays';
+import { EliminatedDialog, GameOverDialog, RebuyDialog, SpectatorBar } from './Overlays';
 import { SidePanel } from './SidePanel';
 import { HeroContext } from './useGame';
 import type { GameController } from './controllers';
@@ -60,10 +63,15 @@ function Seat({ p, x, y, game, hits, winAmount, away }: SeatProps) {
   return (
     <div className={'seat' + (p.folded ? ' folded' : '')} style={{ left: x, top: y }}>
       <div className={'holes' + (showOpen ? ' open' : '')}>
-        {p.inHand && !p.folded &&
-          (showOpen
-            ? p.hole.map((c) => <CardFace key={cardId(c)} card={c} size="sm" hit={hits.has(cardId(c))} className="flipIn" />)
-            : p.hole.map((_, i) => <CardBack key={i} size="sm" />))}
+        {p.inHand &&
+          !p.folded &&
+          p.hole.map((c, i) =>
+            showOpen || (game.rules.revealFirst && i === 0 && c.r > 0) ? (
+              <CardFace key={cardId(c) + i} card={c} size="sm" hit={showOpen && hits.has(cardId(c))} className="flipIn" />
+            ) : (
+              <CardBack key={i} size="sm" />
+            ),
+          )}
       </div>
       <div className={'plate' + (active ? ' active' : '') + (winAmount ? ' winner' : '')}>
         <div className="av">{initials(p.name)}</div>
@@ -86,7 +94,7 @@ function Seat({ p, x, y, game, hits, winAmount, away }: SeatProps) {
             <i
               key={game.turnStartedAt}
               style={{
-                animationDuration: (p.isBot ? 1.5 : game.config.turnSeconds) + 's',
+                animationDuration: (p.isBot ? 1.5 : turnSecondsOf(game)) + 's',
                 animationDelay: p.isBot ? '0s' : -(Date.now() - game.turnStartedAt) / 1000 + 's',
               }}
             />
@@ -105,14 +113,23 @@ function HeroSeat({ p, game, hits, heroHandName, winAmount }: { p: PlayerState; 
   const active = game.toActId === p.id && game.phase === 'betting';
   const label = winAmount ? '+' + fmt(winAmount) : p.lastAction;
   const pos = p.id === game.sbId ? 'SB' : p.id === game.bbId ? 'BB' : null;
+  // Naslepo: vlastní karty jsou před flopem otočené rubem (u hosta online je ani nemá).
+  const hidden = game.rules.hideOwnPreflop && game.street === 'preflop' && game.phase !== 'handEnd' && !p.showCards;
+  const n = p.hole.length;
+  const fan = (i: number) => ({ transform: `rotate(${(i - (n - 1) / 2) * (n > 2 ? 5 : 8)}deg)`, marginLeft: i && n > 2 ? -22 : 0 });
   return (
     <div className="hero">
       <div className="hcards">
         {p.inHand &&
-          p.hole.map((c) => (
-            <CardFace key={cardId(c) + game.handNo} card={c} size="lg" hit={hits.has(cardId(c))} dim={p.folded} className="deal" />
-          ))}
-        {heroHandName && !p.folded && <span className="handtag">{heroHandName}</span>}
+          p.hole.map((c, i) =>
+            hidden || c.r === 0 ? (
+              <CardBack key={'b' + i + game.handNo} size="lg" style={fan(i)} />
+            ) : (
+              <CardFace key={cardId(c) + game.handNo} card={c} size="lg" hit={hits.has(cardId(c))} dim={p.folded} className="deal" style={fan(i)} />
+            ),
+          )}
+        {hidden && p.inHand && <span className="handtag">Naslepo</span>}
+        {heroHandName && !p.folded && !hidden && <span className="handtag">{heroHandName}</span>}
       </div>
       <div style={{ display: 'flex', alignItems: 'flex-end', gap: 10, marginTop: 14 }}>
         {label && <span className={'status ' + statusClass(label)} style={{ marginBottom: 14 }}>{label}</span>}
@@ -130,7 +147,7 @@ function HeroSeat({ p, game, hits, heroHandName, winAmount }: { p: PlayerState; 
             <div className="timer">
               <i
                 key={game.turnStartedAt}
-                style={{ animationDuration: game.config.turnSeconds + 's', animationDelay: -(Date.now() - game.turnStartedAt) / 1000 + 's' }}
+                style={{ animationDuration: turnSecondsOf(game) + 's', animationDelay: -(Date.now() - game.turnStartedAt) / 1000 + 's' }}
               />
             </div>
           )}
@@ -144,9 +161,10 @@ function HeroSeat({ p, game, hits, heroHandName, winAmount }: { p: PlayerState; 
 }
 
 function Board({ game, hits, fadeOthers }: { game: GameState; hits: Set<string>; fadeOthers: boolean }) {
-  const labels = ['FLOP', 'FLOP', 'FLOP', 'TURN', 'RIVER'];
+  const labels = ['FLOP', 'FLOP', 'FLOP', 'TURN', 'RIVER', 'RIVER 2'].slice(0, game.rules.boardCards);
+  const width = labels.length * 64 + (labels.length - 1) * 10;
   return (
-    <div className="board">
+    <div className="board" style={{ left: 540 - width / 2 }}>
       {labels.map((label, i) => {
         const c: Card | undefined = game.board[i];
         if (!c) return <div key={'slot' + i} className="slot">{label}</div>;
@@ -181,9 +199,21 @@ export function GameScreen({ ctl, onExit }: { ctl: GameController & { game: Game
   const sd = game.showdown;
   const winAmounts = new Map(sd?.winners.map((w) => [w.id, w.amount]) ?? []);
 
+  const heroHidden = game.rules.hideOwnPreflop && game.street === 'preflop' && game.phase !== 'handEnd';
   const heroHand = useMemo(
-    () => (hero.inHand && !hero.folded && hero.hole.length ? bestHand([...hero.hole, ...game.board]) : null),
-    [hero.inHand, hero.folded, hero.hole, game.board],
+    () =>
+      hero.inHand && !hero.folded && hero.hole.length && !heroHidden && hero.hole[0].r > 0
+        ? bestHandFor(hero.hole, game.board, game.rules)
+        : null,
+    [hero.inHand, hero.folded, hero.hole, game.board, game.rules, heroHidden],
+  );
+  const cash = isCash(game);
+
+  // Trénink: nápověda se počítá jednou za tah.
+  const myTurn = game.phase === 'betting' && game.toActId === heroId;
+  const hint = useMemo(
+    () => (ctl.hints && myTurn ? computeHint(game, heroId, createRng(game.turnStartedAt >>> 0)) : null),
+    [ctl.hints, myTurn, game.turnStartedAt, game.handNo],
   );
 
   // Které karty zvýraznit: při showdownu vítěznou kombinaci, jinak tvou.
@@ -226,13 +256,17 @@ export function GameScreen({ ctl, onExit }: { ctl: GameController & { game: Game
         <div className="brand">
           <span className="sq" />
           <b>POKER</b>
-          <span>{ctl.online ? `Online · stůl ${ctl.online.code}` : "Texas Hold'em · turnaj"}</span>
+          <span>
+            {ctl.online ? `Online · stůl ${ctl.online.code}` : "Texas Hold'em"} · {cash ? 'cash game' : 'turnaj'}
+          </span>
         </div>
         <div className="tinfo">
-          <div>
-            <span>Level</span>
-            <b>{game.level + 1}</b>
-          </div>
+          {!cash && (
+            <div>
+              <span>Level</span>
+              <b>{game.level + 1}</b>
+            </div>
+          )}
           <div>
             <span>Blindy</span>
             <b>
@@ -240,12 +274,22 @@ export function GameScreen({ ctl, onExit }: { ctl: GameController & { game: Game
               {blinds.ante ? ` (ante ${fmt(blinds.ante)})` : ''}
             </b>
           </div>
-          <div>
-            <span>
-              Další {fmt(next.sb)} / {fmt(next.bb)} za
-            </span>
-            <b style={{ color: 'var(--amber)' }}>{paused ? 'pauza' : `${mm}:${ss}`}</b>
-          </div>
+          {!cash && (
+            <div>
+              <span>
+                Další {fmt(next.sb)} / {fmt(next.bb)} za
+              </span>
+              <b style={{ color: 'var(--amber)' }}>{paused ? 'pauza' : `${mm}:${ss}`}</b>
+            </div>
+          )}
+          {cash && hero && (
+            <div>
+              <span>Tvůj zisk</span>
+              <b style={{ color: profit(hero, game) >= 0 ? 'var(--success)' : 'var(--pixel-hot)' }}>
+                {(profit(hero, game) >= 0 ? '+' : '') + fmt(profit(hero, game))}
+              </b>
+            </div>
+          )}
           <div>
             <span>Hráči</span>
             <b>
@@ -342,13 +386,19 @@ export function GameScreen({ ctl, onExit }: { ctl: GameController & { game: Game
         />
       )}
 
-      <ActionDock game={game} now={now} act={act} preAction={preAction} setPreAction={setPreAction} />
-      <SidePanel game={game} heroHand={heroHand} chat={ctl.chat} />
+      <GameChangerLayer game={game} />
+      <ActionDock game={game} now={now} act={act} preAction={preAction} setPreAction={setPreAction} advice={hint?.advice ?? null} />
+      <SidePanel game={game} heroHand={heroHand} chat={ctl.chat} top={ctl.hints && hint ? <HintPanel hint={hint} /> : null} />
 
       {paused && !togglePause && <div className="pausemark">PAUZA</div>}
-      {hero.out && spectating && game.phase !== 'gameOver' && <SpectatorBar place={heroPlace} onLeave={onExit} />}
-      {hero.out && !spectating && game.phase !== 'gameOver' && (
+      {hero.out && spectating && game.phase !== 'gameOver' && (
+        <SpectatorBar place={heroPlace} onLeave={onExit} onRebuy={cash && ctl.rebuy ? () => (setSpectating(false), ctl.rebuy!()) : undefined} />
+      )}
+      {hero.out && !spectating && !cash && game.phase !== 'gameOver' && (
         <EliminatedDialog game={game} stats={stats} onWatch={() => setSpectating(true)} onLeave={onExit} />
+      )}
+      {hero.out && !spectating && cash && ctl.rebuy && (
+        <RebuyDialog game={game} onRebuy={ctl.rebuy} onWatch={() => setSpectating(true)} onLeave={onExit} />
       )}
       {game.phase === 'gameOver' && (
         <GameOverDialog
@@ -367,6 +417,11 @@ export function GameScreen({ ctl, onExit }: { ctl: GameController & { game: Game
       )}
     </HeroContext.Provider>
   );
+}
+
+/** Cash game: kolik má hráč víc (nebo míň), než za kolik nakoupil. */
+export function profit(p: PlayerState, game: GameState): number {
+  return p.stack + p.committed - p.buyIns * game.config.startStack;
 }
 
 function copyText(text: string) {

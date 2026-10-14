@@ -1,7 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { parseCards } from '../engine/cards';
 import { HAND_NAMES, type HandValue, describeHand } from '../engine/evaluator';
-import type { GameState } from '../engine/game';
+import { type GameState, isCash } from '../engine/game';
+import { eventById } from '../engine/events';
+import { type RoundRules, categoryOrder } from '../engine/rules';
 import { useHeroId } from './useGame';
 import type { ChatMsg } from '../net/protocol';
 import { Icon, MiniCard, fmt } from './parts';
@@ -20,11 +22,23 @@ const EXAMPLES: [string, number, string][] = [
   ['As Ks Qs Js Ts', 5, '10, J, Q, K, A ve stejné barvě. Nejsilnější ruka.'],
 ];
 
-function RankingPanel({ heroHand, emptyText, onHide }: { heroHand: HandValue | null; emptyText: string; onHide: () => void }) {
+/** Krátká poznámka, když karta mění vyhodnocení. */
+function rulesNote(r: RoundRules): string | null {
+  const ev = eventById(r.eventId);
+  if (!ev) return null;
+  if (r.catRank || r.lowball || r.ignoreSuits || r.omaha || r.holeCards !== 2 || r.boardCards !== 5) return `${ev.name}: ${ev.desc}`;
+  return null;
+}
+
+function RankingPanel({ heroHand, emptyText, onHide, rules }: { heroHand: HandValue | null; emptyText: string; onHide: () => void; rules: RoundRules }) {
   const cur = heroHand?.cat ?? -1;
   const [sel, setSel] = useState<number | null>(null);
   const shown = sel ?? (cur >= 0 ? cur : 0);
   const rows = useMemo(() => EXAMPLES.map(([c, n, d]) => ({ cards: parseCards(c), counted: n, desc: d })), []);
+  // Pořadí od nejslabší po nejsilnější podle pravidel ruky (Game Changer ho může přeházet).
+  const order = useMemo(() => categoryOrder(rules), [rules]);
+  const off = (cat: number) => rules.ignoreSuits && (cat === 5 || cat === 8 || cat === 9);
+  const note = rulesNote(rules);
 
   return (
     <section className="ranks" aria-label="Pořadí kombinací">
@@ -43,22 +57,29 @@ function RankingPanel({ heroHand, emptyText, onHide }: { heroHand: HandValue | n
           {heroHand?.cards.map((c, i) => <MiniCard key={i} card={c} size="s34" counted={i < heroHand.counted} hit />)}
         </div>
       </div>
+      {note && <p className="rnote">{note}</p>}
       <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-        {rows.map((r, i) => (
-          <button
-            type="button"
-            key={i}
-            className={'rrow' + (i === shown ? ' sel' : '') + (i === cur ? ' cur' : '')}
-            aria-pressed={i === shown}
-            onClick={() => setSel(i)}
-          >
-            <span className="rn">{String(i + 1).padStart(2, '0')}</span>
-            <span className="rname">{HAND_NAMES[i]}</span>
-            <span className="rcards">
-              {r.cards.map((c, j) => <MiniCard key={j} card={c} size="xs" counted={j < r.counted} />)}
-            </span>
-          </button>
-        ))}
+        {order.map((cat, pos) => {
+          const r = rows[cat];
+          return (
+            <button
+              type="button"
+              key={cat + '-' + (rules.eventId ?? '')}
+              className={'rrow' + (cat === shown ? ' sel' : '') + (cat === cur ? ' cur' : '') + (off(cat) ? ' off' : '')}
+              aria-pressed={cat === shown}
+              onClick={() => setSel(cat)}
+              style={rules.eventId ? { animation: `fadeUp .35s ${pos * 0.03}s both` } : undefined}
+            >
+              <span className="rn">{String(pos + 1).padStart(2, '0')}</span>
+              <span className="rname">{HAND_NAMES[cat]}</span>
+              <span className="rcards">
+                {r.cards.map((c, j) => (
+                  <MiniCard key={j} card={c} size="xs" counted={j < r.counted} />
+                ))}
+              </span>
+            </button>
+          );
+        })}
       </div>
       <p className="rdesc">
         <b>{HAND_NAMES[shown]}</b> — {rows[shown].desc}
@@ -116,7 +137,7 @@ function ChatBox({ chat }: { chat: Chat }) {
   );
 }
 
-export function SidePanel({ game, heroHand, chat }: { game: GameState; heroHand: HandValue | null; chat?: Chat }) {
+export function SidePanel({ game, heroHand, chat, top }: { game: GameState; heroHand: HandValue | null; chat?: Chat; top?: React.ReactNode }) {
   const heroId = useHeroId();
   const [tab, setTab] = useState<Tab>('log');
   const [ranksOpen, setRanksOpen] = useState(true);
@@ -156,6 +177,7 @@ export function SidePanel({ game, heroHand, chat }: { game: GameState; heroHand:
         ))}
       </div>
 
+      {top}
       <div className="tabbody" ref={logRef}>
         {tab === 'log' &&
           log.map((l) =>
@@ -173,16 +195,21 @@ export function SidePanel({ game, heroHand, chat }: { game: GameState; heroHand:
         {tab === 'players' &&
           standing.map((p, i) => (
             <div key={p.id} className={'prow' + (p.id === heroId ? ' me' : '') + (p.out ? ' out' : '')}>
-              <span style={{ width: 24, color: 'var(--muted)' }}>{p.out ? p.place + '.' : i + 1 + '.'}</span>
+              <span style={{ width: 24, color: 'var(--muted)' }}>{p.out ? (p.place ? p.place + '.' : '–') : i + 1 + '.'}</span>
               <span style={{ width: 78, fontWeight: 700, overflow: 'hidden', textOverflow: 'ellipsis' }}>{p.name}</span>
               {p.out ? (
-                <span style={{ flex: 1 }}>mimo hru</span>
+                <span style={{ flex: 1 }}>{isCash(game) ? 'bez žetonů' : 'mimo hru'}</span>
               ) : (
                 <>
                   <div className="bar">
                     <i style={{ width: ((p.stack + p.committed) / max) * 100 + '%' }} />
                   </div>
                   <span style={{ width: 70, textAlign: 'right', fontWeight: 700 }}>{fmt(p.stack + p.committed)}</span>
+                  {isCash(game) && (
+                    <span style={{ width: 66, textAlign: 'right', fontSize: 12, color: cashProfit(p, game) >= 0 ? 'var(--success)' : 'var(--pixel-hot)' }}>
+                      {(cashProfit(p, game) >= 0 ? '+' : '') + fmt(cashProfit(p, game))}
+                    </span>
+                  )}
                 </>
               )}
             </div>
@@ -191,7 +218,7 @@ export function SidePanel({ game, heroHand, chat }: { game: GameState; heroHand:
       </div>
 
       {ranksOpen ? (
-        <RankingPanel heroHand={heroHand} emptyText={heroEmptyText(game, heroId)} onHide={() => setRanksOpen(false)} />
+        <RankingPanel heroHand={heroHand} emptyText={heroEmptyText(game, heroId)} onHide={() => setRanksOpen(false)} rules={game.rules} />
       ) : (
         <button type="button" className="ranksbtn" onClick={() => setRanksOpen(true)} aria-label="Zobrazit pořadí kombinací">
           <span>?</span>
@@ -200,4 +227,8 @@ export function SidePanel({ game, heroHand, chat }: { game: GameState; heroHand:
       )}
     </aside>
   );
+}
+
+function cashProfit(p: GameState['players'][number], game: GameState): number {
+  return p.stack + p.committed - p.buyIns * game.config.startStack;
 }

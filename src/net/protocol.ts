@@ -51,7 +51,8 @@ export type ClientMsg =
   | { t: 'action'; action: Action }
   | { t: 'chat'; text: string }
   | { t: 'leave' }
-  | { t: 'ping' };
+  | { t: 'ping' }
+  | { t: 'rebuy' };
 
 /** Jak často si strany posílají ping a po jaké době ticha se spojení bere jako ztracené. */
 export const PING_MS = 3000;
@@ -73,11 +74,17 @@ const HIDDEN: Card = { r: 0, s: 's' };
  * a seed (z něj by šel balíček dopočítat) se nahradí prázdnými hodnotami.
  */
 export function viewFor(s: GameState, playerId: string): GameState {
+  // Naslepo: před flopem nevidí své karty ani hráč sám.
+  const blindNow = s.rules.hideOwnPreflop && s.street === 'preflop' && s.phase !== 'handEnd';
   return {
     ...s,
     seed: 0,
     deck: s.deck.map(() => HIDDEN),
-    players: s.players.map((p) => (p.id === playerId || p.showCards ? p : { ...p, hole: p.hole.map(() => HIDDEN) })),
+    players: s.players.map((p) => {
+      if (p.showCards || (p.id === playerId && !blindNow)) return p;
+      // Odhalená karta: první karta každého je vidět všem.
+      return { ...p, hole: p.hole.map((c, i) => (s.rules.revealFirst && i === 0 && p.inHand ? c : HIDDEN)) };
+    }),
   };
 }
 
@@ -104,6 +111,8 @@ export function parseClientMsg(raw: unknown): ClientMsg | null {
       return { t: 'leave' };
     case 'ping':
       return { t: 'ping' };
+    case 'rebuy':
+      return { t: 'rebuy' };
     default:
       return null;
   }
