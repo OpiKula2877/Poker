@@ -277,7 +277,7 @@ kbd { font-family: inherit; font-size: 11px; font-weight: 700; border: 1px solid
 
 /* ---------- lobby ---------- */
 .lobby { position: absolute; inset: 0; }
-.lobby main { width: 1120px; margin: 0 auto; padding-top: 36px; display: flex; gap: 48px; }
+.lobby main { width: 1120px; margin: 0 auto; padding-top: 28px; display: flex; gap: 48px; }
 .lab { font-size: 13px; font-weight: 700; letter-spacing: .08em; color: var(--muted); margin: 0; }
 .seg { height: 40px; padding: 0 14px; border: 1px solid var(--border); background: transparent; color: var(--muted); border-radius: 6px; font-weight: 700; font-size: 13px; cursor: pointer; white-space: nowrap; transition: background .15s, color .15s, border-color .15s; }
 .seg:hover { color: var(--text); }

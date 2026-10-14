@@ -196,7 +196,7 @@ export function Lobby({ settings: raw, onChange, onStartLocal, host, onCreateRoo
       </header>
 
       <main>
-        <div style={{ flex: 1.35, display: 'flex', flexDirection: 'column', gap: 18, minWidth: 0 }}>
+        <div style={{ flex: 1.35, display: 'flex', flexDirection: 'column', gap: 14, minWidth: 0 }}>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
             <span style={{ fontSize: 13, fontWeight: 700, letterSpacing: '0.08em', color: 'var(--accent)' }}>
               TEXAS HOLD'EM · {VARIANT_NAMES[st.variant].toUpperCase()}
