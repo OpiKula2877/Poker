@@ -8,7 +8,9 @@ export default defineConfig({
   plugins: [
     react(),
     VitePWA({
-      registerType: 'autoUpdate',
+      // Nová verze se nenačte sama (zabila by rozehranou hru); aplikace nabídne tlačítko Obnovit.
+      registerType: 'prompt',
+      injectRegister: false,
       includeAssets: ['icon.svg'],
       manifest: {
         name: "Poker – Texas Hold'em",

@@ -8,6 +8,7 @@ import { JoinScreen } from './Join';
 import { Lobby } from './Lobby';
 import { GameScreen } from './Table';
 import { Stage } from './parts';
+import { UpdateBar } from './UpdateBar';
 
 /** Při chybě nezůstane prázdná obrazovka. */
 class ErrorBoundary extends Component<{ children: ReactNode; onReset: () => void }, { error: Error | null }> {
@@ -211,8 +212,11 @@ export function App() {
   }
 
   return (
-    <Stage>
-      <ErrorBoundary onReset={toLobby}>{content}</ErrorBoundary>
-    </Stage>
+    <>
+      <Stage>
+        <ErrorBoundary onReset={toLobby}>{content}</ErrorBoundary>
+      </Stage>
+      <UpdateBar />
+    </>
   );
 }
