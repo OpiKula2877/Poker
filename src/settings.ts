@@ -23,6 +23,8 @@ export interface Settings {
   gcChance: number;
   /** Trénink: nápověda se šancí na výhru a doporučením (jen proti botům). */
   hints: boolean;
+  /** Profilový obrázek (data URL 96×96), nebo null. */
+  avatar: string | null;
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -39,6 +41,7 @@ export const DEFAULT_SETTINGS: Settings = {
   gameChanger: false,
   gcChance: 0.5,
   hints: false,
+  avatar: null,
 };
 
 /** Sit & Go turbo: krátký turnaj s pevným nastavením. */
@@ -66,7 +69,6 @@ export function settingsToConfig(raw: Settings, seats: number): GameConfig {
     turnSeconds: s.turnSeconds,
     variant: cash ? 'cash' : 'tournament',
     gameChanger: s.gameChanger ? { chance: s.gcChance } : null,
-    revealMs: 2600,
   };
 }
 

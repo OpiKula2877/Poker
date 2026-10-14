@@ -155,6 +155,12 @@ export const Icon = {
       <path d="M7 5l12 7-12 7z" />
     </Svg>
   ),
+  sidebar: (s?: number) => (
+    <Svg size={s}>
+      <rect x="3" y="4" width="18" height="16" rx="2" />
+      <path d="M15 4v16" />
+    </Svg>
+  ),
   trophy: (s?: number) => (
     <Svg size={s}>
       <path d="M8 21h8M12 17v4M7 4h10v5a5 5 0 0 1-10 0z" />

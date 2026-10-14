@@ -29,6 +29,8 @@ export function joinLink(code: string): string {
 export interface RoomPlayer {
   id: string;
   name: string;
+  /** Profilový obrázek (malé JPEG data URL), nebo null. */
+  avatar?: string | null;
   connected: boolean;
   isHost: boolean;
 }
@@ -47,12 +49,13 @@ export interface ChatMsg {
 }
 
 export type ClientMsg =
-  | { t: 'hello'; v: number; name: string; token: string }
+  | { t: 'hello'; v: number; name: string; token: string; avatar?: string | null }
   | { t: 'action'; action: Action }
   | { t: 'chat'; text: string }
   | { t: 'leave' }
   | { t: 'ping' }
-  | { t: 'rebuy' };
+  | { t: 'rebuy' }
+  | { t: 'ack' };
 
 /** Jak často si strany posílají ping a po jaké době ticha se spojení bere jako ztracené. */
 export const PING_MS = 3000;
@@ -96,7 +99,7 @@ export function parseClientMsg(raw: unknown): ClientMsg | null {
     case 'hello':
       if (typeof m.name !== 'string' || typeof m.token !== 'string' || typeof m.v !== 'number') return null;
       if (m.token.length < 8 || m.token.length > 64) return null;
-      return { t: 'hello', v: m.v, name: m.name.slice(0, 40), token: m.token };
+      return { t: 'hello', v: m.v, name: m.name.slice(0, 40), token: m.token, avatar: cleanAvatar(m.avatar) };
     case 'action': {
       const a = m.action as Record<string, unknown> | undefined;
       if (!a || typeof a !== 'object') return null;
@@ -113,9 +116,18 @@ export function parseClientMsg(raw: unknown): ClientMsg | null {
       return { t: 'ping' };
     case 'rebuy':
       return { t: 'rebuy' };
+    case 'ack':
+      return { t: 'ack' };
     default:
       return null;
   }
+}
+
+/** Profilový obrázek: jen malé obrázkové data URL, cokoli jiného se zahodí. */
+export const AVATAR_MAX = 40_000;
+export function cleanAvatar(raw: unknown): string | null {
+  if (typeof raw !== 'string' || raw.length > AVATAR_MAX) return null;
+  return /^data:image\/(jpeg|png|webp);base64,[A-Za-z0-9+/=]+$/.test(raw) ? raw : null;
 }
 
 export function randomToken(): string {

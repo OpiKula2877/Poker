@@ -6,6 +6,7 @@ import { EVENTS } from '../engine/events';
 import { type GameVariant, type PlayMode, type Settings, VARIANT_NAMES, effectiveSettings } from '../settings';
 import { useSubscribe } from './controllers';
 import { ChipStack, Icon, fmt } from './parts';
+import { AvatarPicker, NumField } from './LobbyFields';
 
 interface Props {
   settings: Settings;
@@ -20,10 +21,9 @@ interface Props {
 const STACKS = [1500, 5000, 10000, 25000];
 const BLINDS: [number, number][] = [
   [10, 20],
-  [25, 50],
   [50, 100],
 ];
-const LEVELS = [3, 5, 10, 15, 20];
+const LEVELS = [5, 10, 15];
 const TURNS = [10, 20, 30];
 const DIFFS: [number, string][] = [
   [0, 'Lehcí'],
@@ -216,12 +216,6 @@ export function Lobby({ settings: raw, onChange, onStartLocal, host, onCreateRoo
                 <span className="mt">{Icon.link(20)} Přes odkaz</span>
                 <span className="md">Hostitelem je tvůj prohlížeč, ostatní přijdou přes odkaz.</span>
               </button>
-              <button type="button" role="radio" aria-checked="false" className="mode" disabled>
-                <span className="mt">
-                  {Icon.server(20)} Vlastní server <span className="soon">BRZY</span>
-                </span>
-                <span className="md">Server běží u tebe doma nebo v síti, ostatní se připojí na adresu.</span>
-              </button>
             </div>
           </div>
 
@@ -263,7 +257,10 @@ export function Lobby({ settings: raw, onChange, onStartLocal, host, onCreateRoo
               <label className="lab" htmlFor="pname">
                 TVOJE JMÉNO
               </label>
-              <input id="pname" className="field" type="text" maxLength={14} value={st.name} onChange={(e) => set({ name: e.target.value })} />
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <AvatarPicker value={raw.avatar} onChange={(avatar) => set({ avatar })} name={st.name} />
+                <input id="pname" className="field" type="text" maxLength={14} value={st.name} onChange={(e) => set({ name: e.target.value })} style={{ flexGrow: 1, minWidth: 0 }} />
+              </div>
             </div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
               <p className="lab">POČET MÍST</p>
@@ -292,20 +289,7 @@ export function Lobby({ settings: raw, onChange, onStartLocal, host, onCreateRoo
                   {fmt(v)}
                 </button>
               ))}
-              <input
-                className="field"
-                type="number"
-                min={100}
-                step={100}
-                disabled={fixed}
-                value={st.startStack}
-                onChange={(e) => {
-                  const v = Number(e.target.value);
-                  if (v > 0) set({ startStack: Math.min(10_000_000, Math.floor(v)) });
-                }}
-                aria-label="Vlastní počet žetonů"
-                style={{ width: 120, textAlign: 'right', fontWeight: 700 }}
-              />
+              <NumField value={st.startStack} min={10} max={10_000_000} disabled={fixed} width={120} label="Vlastní počet žetonů" onCommit={(v) => set({ startStack: v })} />
               <div style={{ flexGrow: 1 }} />
               <ChipStack amount={st.startStack} />
               <span style={{ fontSize: 12, color: 'var(--muted)', whiteSpace: 'nowrap' }}>= {Math.floor(st.startStack / bb)} BB</span>
@@ -315,22 +299,27 @@ export function Lobby({ settings: raw, onChange, onStartLocal, host, onCreateRoo
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 24 }}>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
               <p className="lab">BLINDY NA ZAČÁTKU</p>
-              <div style={{ display: 'flex', gap: 8 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                 {BLINDS.map(([s, b]) => (
                   <button key={b} type="button" className={seg(st.startBb === b)} disabled={fixed} onClick={() => set({ startBb: b })}>
                     {s} / {b}
                   </button>
                 ))}
+                <NumField value={st.startBb} min={2} max={1_000_000} disabled={fixed} unit="BB" width={72} label="Vlastní big blind" onCommit={(v) => set({ startBb: v })} />
               </div>
+              <span style={{ fontSize: 11, color: 'var(--muted)' }}>
+                small blind {fmt(Math.max(1, Math.floor(st.startBb / 2)))} · big blind {fmt(st.startBb)}
+              </span>
             </div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
               <p className="lab">{cash ? "BLINDY NEROSTOU (CASH GAME)" : "ZVÝŠENÍ BLINDŮ KAŽDÝCH"}</p>
-              <div style={{ display: 'flex', gap: 8 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                 {LEVELS.map((m) => (
                   <button key={m} type="button" className={seg(st.levelMinutes === m && !cash)} disabled={fixed || cash} onClick={() => set({ levelMinutes: m })}>
                     {m} min
                   </button>
                 ))}
+                <NumField value={st.levelMinutes} min={1} max={240} disabled={fixed || cash} unit="min" width={56} label="Vlastní délka levelu" onCommit={(v) => set({ levelMinutes: v })} />
               </div>
             </div>
           </div>
@@ -338,12 +327,13 @@ export function Lobby({ settings: raw, onChange, onStartLocal, host, onCreateRoo
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 24 }}>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
               <p className="lab">ČAS NA TAH</p>
-              <div style={{ display: 'flex', gap: 8 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                 {TURNS.map((s) => (
                   <button key={s} type="button" className={seg(st.turnSeconds === s)} onClick={() => set({ turnSeconds: s })}>
                     {s} s
                   </button>
                 ))}
+                <NumField value={st.turnSeconds} min={5} max={300} unit="s" width={56} label="Vlastní čas na tah" onCommit={(v) => set({ turnSeconds: v })} />
               </div>
             </div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>

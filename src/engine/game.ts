@@ -7,12 +7,13 @@ import { DEFAULT_RULES, type RoundRules } from './rules';
 export type Street = 'preflop' | 'flop' | 'turn' | 'river';
 /**
  * waiting   – před první rukou (v cash game i když u stolu chybí hráči)
+ * reveal    – vylosovaná Game Changer karta; čeká se, až ji všichni lidé potvrdí (ackEvent)
  * betting   – někdo je na tahu (toActId)
  * roundEnd  – sázkové kolo skončilo, `advance` rozdá další karty nebo vyhodnotí ruku
  * handEnd   – ruka vyhodnocena (showdown), `startHand` začne další
  * gameOver  – zbyl jeden hráč (jen turnaj)
  */
-export type Phase = 'waiting' | 'betting' | 'roundEnd' | 'handEnd' | 'gameOver';
+export type Phase = 'waiting' | 'reveal' | 'betting' | 'roundEnd' | 'handEnd' | 'gameOver';
 
 export interface BlindLevel {
   sb: number;
@@ -38,8 +39,6 @@ export interface GameConfig {
   /** Turnaj (vyřazování) nebo cash game (dokupování, blindy nerostou). */
   variant?: Variant;
   gameChanger?: GameChangerConfig | null;
-  /** Jak dlouho se ukazuje vylosovaná karta, než se začne hrát (ms). */
-  revealMs?: number;
 }
 
 export interface PlayerSetup {
@@ -122,6 +121,10 @@ export interface GameState {
   /** Big blind této ruky (po případném zdvojení) – jednotka pro limit a min. sázku. */
   betUnit: number;
   raisesThisStreet: number;
+  /** Fáze reveal: kdo ještě nepotvrdil Game Changer kartu. */
+  pendingAcks: string[];
+  /** Fáze, do které hra přejde po potvrzení karty. */
+  revealNext: Phase | null;
   /** Pravidla aktuální ruky (Game Changer). */
   rules: RoundRules;
   showdown: ShowdownInfo | null;
@@ -281,6 +284,8 @@ export function createGame(config: GameConfig, setups: PlayerSetup[], seed: numb
     minRaise: config.blinds[0].bb,
     betUnit: config.blinds[0].bb,
     raisesThisStreet: 0,
+    pendingAcks: [],
+    revealNext: null,
     rules: DEFAULT_RULES,
     showdown: null,
     winnerId: null,
@@ -404,8 +409,13 @@ export function startHand(prev: GameState, now: number, random?: () => number): 
   s.toActId = null;
   s.handStartedAt = now;
   settle(s, s.bbId!, now);
-  // Vylosovaná karta se chvíli ukazuje; čas na tah běží až po ní.
-  if (event && s.phase === 'betting') s.turnStartedAt = now + (s.config.revealMs ?? 0);
+  // Vylosovaná karta: hra stojí, dokud ji všichni lidé u stolu nepotvrdí.
+  const readers = s.players.filter((p) => !p.isBot && !p.out).map((p) => p.id);
+  if (event && readers.length) {
+    s.revealNext = s.phase;
+    s.pendingAcks = readers;
+    s.phase = 'reveal';
+  }
   return s;
 }
 
@@ -674,6 +684,19 @@ function finishHand(s: GameState) {
   } else {
     s.phase = 'handEnd';
   }
+}
+
+/** Hráč potvrdil, že si Game Changer kartu přečetl. Až potvrdí všichni, hraje se. */
+export function ackEvent(prev: GameState, id: string, now: number): GameState {
+  if (prev.phase !== 'reveal' || !prev.pendingAcks.includes(id)) return prev;
+  const s = clone(prev);
+  s.pendingAcks = s.pendingAcks.filter((x) => x !== id);
+  if (!s.pendingAcks.length) {
+    s.phase = s.revealNext ?? 'betting';
+    s.revealNext = null;
+    s.turnStartedAt = now;
+  }
+  return s;
 }
 
 /** Cash game: hráč bez žetonů si znovu koupí počáteční stack. */

@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import type { Advice } from '../bots/hints';
-import { type Action, type GameState, currentBlinds, legalActions, potTotal, turnSecondsOf } from '../engine/game';
+import { type Action, type GameState, legalActions, potTotal, turnSecondsOf } from '../engine/game';
 import { type PreAction, useHeroId } from './useGame';
 import { fmt } from './parts';
 
@@ -20,7 +20,7 @@ export function ActionDock({ game, now, act, preAction, setPreAction, advice }: 
   const legal = legalActions(game, heroId);
   const myTurn = !!legal;
   const pot = potTotal(game);
-  const step = currentBlinds(game).sb; // předvolby zaokrouhlené na small blind
+  const step = Math.max(1, game.betUnit); // −/+ po jednom big blindu
   const [amount, setAmount] = useState(0);
   const turnKey = useRef(0);
 
@@ -36,15 +36,6 @@ export function ActionDock({ game, now, act, preAction, setPreAction, advice }: 
   const to = legal ? clamp(amount || legal.minRaiseTo) : 0;
   const isAllInRaise = legal ? to >= legal.maxRaiseTo : false;
 
-  const presets = legal
-    ? ([
-        ['Min', legal.minRaiseTo],
-        ['½ banku', legal.currentBet + (pot + legal.callAmount) / 2],
-        ['¾ banku', legal.currentBet + (pot + legal.callAmount) * 0.75],
-        ['Bank', legal.currentBet + pot + legal.callAmount],
-      ] as [string, number][]).map(([label, v]) => [label, clamp(Math.round(v / step) * step)] as [string, number])
-    : [];
-
   const doFold = () => legal && act({ type: 'fold' });
   const doCall = () => legal && act(legal.canCheck ? { type: 'check' } : { type: 'call' });
   const doRaise = () => legal?.canRaise && act(isAllInRaise ? { type: 'allin' } : { type: 'raise', to });
@@ -56,7 +47,7 @@ export function ActionDock({ game, now, act, preAction, setPreAction, advice }: 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const t = e.target as HTMLElement;
-      if (t.tagName === 'INPUT' && (t as HTMLInputElement).type !== 'range') return;
+      if (t.tagName === 'INPUT') return;
       if (e.ctrlKey || e.metaKey || e.altKey) return;
       const k = e.key.toLowerCase();
       const h = handlers.current;
@@ -121,36 +112,29 @@ export function ActionDock({ game, now, act, preAction, setPreAction, advice }: 
         {myTurn && legal?.canRaise && legal.minRaiseTo === legal.maxRaiseTo ? (
           <span style={{ fontSize: 12, color: "var(--muted)" }}>{fixedNote}</span>
         ) : myTurn && legal?.canRaise ? (
-          <>
-            {presets.map(([label, v]) => (
-              <button key={label} type="button" className={'pre' + (v === to ? ' on' : '')} onClick={() => setAmount(v)}>
-                {label} {fmt(v)}
-              </button>
-            ))}
-            <label htmlFor="raiseAmt" className="sr-only">
-              Částka navýšení
-            </label>
+          <div className="amount">
+            <label htmlFor="raiseAmt">{legal.currentBet === 0 ? 'Sázka' : 'Navýšit na'}</label>
+            <button type="button" className="stepbtn" aria-label="Méně" onClick={() => setAmount(clamp(to - step))} disabled={to <= legal.minRaiseTo}>
+              −
+            </button>
             <input
               id="raiseAmt"
-              className="range"
-              type="range"
-              min={legal.minRaiseTo}
-              max={legal.maxRaiseTo}
-              step={Math.max(1, Math.floor(legal.minRaiseTo / 20))}
-              value={to}
-              onChange={(e) => setAmount(Number(e.target.value))}
-            />
-            <input
               className="num"
               type="number"
               min={legal.minRaiseTo}
               max={legal.maxRaiseTo}
+              step={step}
               value={amount || to}
               onChange={(e) => setAmount(Number(e.target.value))}
               onBlur={() => setAmount(to)}
-              aria-label="Částka navýšení"
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') doRaise();
+              }}
             />
-          </>
+            <button type="button" className="stepbtn" aria-label="Více" onClick={() => setAmount(clamp(to + step))} disabled={to >= legal.maxRaiseTo}>
+              +
+            </button>
+          </div>
         ) : (
           !myTurn &&
           inHand &&

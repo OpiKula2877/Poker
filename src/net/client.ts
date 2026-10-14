@@ -47,9 +47,12 @@ export class ClientRoom {
   private lastHostMsg = 0;
   private listeners = new Set<() => void>();
 
-  constructor(code: string, name: string) {
+  avatar: string | null;
+
+  constructor(code: string, name: string, avatar: string | null = null) {
     this.code = code;
     this.name = name;
+    this.avatar = avatar;
     this.token = storedToken(code);
   }
 
@@ -91,7 +94,7 @@ export class ClientRoom {
       const conn = peer.connect(PEER_PREFIX + this.code, { reliable: true, serialization: 'json' });
       this.conn = conn;
       conn.on('open', () => {
-        this.send({ t: 'hello', v: PROTOCOL_VERSION, name: this.name, token: this.token });
+        this.send({ t: 'hello', v: PROTOCOL_VERSION, name: this.name, token: this.token, avatar: this.avatar });
         this.lastHostMsg = Date.now();
         clearInterval(this.heartbeat);
         this.heartbeat = setInterval(() => {
@@ -162,6 +165,10 @@ export class ClientRoom {
 
   sendAction(action: Action) {
     this.send({ t: 'action', action });
+  }
+
+  sendAck() {
+    this.send({ t: 'ack' });
   }
 
   sendRebuy() {

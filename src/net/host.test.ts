@@ -5,7 +5,7 @@ vi.mock('peerjs', () => ({ default: class {} }));
 import { createGame, makeBlindLevels, startHand } from '../engine/game';
 import { DEFAULT_SETTINGS } from '../settings';
 import { type Conn, HostRoom } from './host';
-import { type HostMsg, PROTOCOL_VERSION, normalizeCode, parseClientMsg, viewFor } from './protocol';
+import { type HostMsg, PROTOCOL_VERSION, cleanAvatar, normalizeCode, parseClientMsg, viewFor } from './protocol';
 
 class FakeConn implements Conn {
   sent: HostMsg[] = [];
@@ -166,5 +166,20 @@ describe('protokol', () => {
     expect(parseClientMsg({ t: 'hello', name: 'x', token: 'short', v: 1 })).toBeNull();
     expect(parseClientMsg({ t: 'action', action: { type: 'raise', to: Infinity } })).toBeNull();
     expect(parseClientMsg({ t: 'chat', text: 'a'.repeat(500) })).toEqual({ t: 'chat', text: 'a'.repeat(200) });
+  });
+});
+
+describe('profilové obrázky', () => {
+  it('přijme malé obrázkové data URL, cokoli jiného zahodí', () => {
+    expect(cleanAvatar('data:image/jpeg;base64,AAAA')).toBe('data:image/jpeg;base64,AAAA');
+    expect(cleanAvatar('data:image/svg+xml;base64,AAAA')).toBeNull();
+    expect(cleanAvatar('javascript:alert(1)')).toBeNull();
+    expect(cleanAvatar('data:image/png;base64,' + 'A'.repeat(50_000))).toBeNull();
+  });
+  it('hostitel rozešle obrázek hráče ostatním', () => {
+    const room = new HostRoom(DEFAULT_SETTINGS);
+    const c = new FakeConn();
+    room.handleMessage(c, { ...hello('Eva', 'token-eva-123'), avatar: 'data:image/jpeg;base64,QUJD' });
+    expect(c.last('room')!.room.players.find((p) => p.id === 'g1')!.avatar).toBe('data:image/jpeg;base64,QUJD');
   });
 });

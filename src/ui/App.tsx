@@ -87,7 +87,7 @@ export function App() {
   const [client, setClient] = useState<ClientRoom | null>(() => {
     const code = codeFromHash();
     if (!code || !ClientRoom.hasToken(code)) return null;
-    const c = new ClientRoom(code, cleanName(settings.name));
+    const c = new ClientRoom(code, cleanName(settings.name), settings.avatar);
     c.connect();
     return c;
   });
@@ -180,7 +180,7 @@ export function App() {
           onConnect={(name) => {
             const n = cleanName(name);
             update({ ...settings, name: n });
-            const c = new ClientRoom(joinCode, n);
+            const c = new ClientRoom(joinCode, n, settings.avatar);
             c.connect();
             setClient(c);
           }}

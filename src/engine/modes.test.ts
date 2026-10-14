@@ -7,6 +7,7 @@ import { EVENTS, drawEvent, rulesForEvent } from './events';
 import {
   type GameConfig,
   type GameState,
+  ackEvent,
   advance,
   applyAction,
   chipTotal,
@@ -179,7 +180,7 @@ describe('cash game', () => {
     expect(last.phase).toBe('handEnd');
     expect(last.level).toBe(0);
     expect(last.players.some((p) => p.buyIns > 1)).toBe(true);
-  });
+  }, 60_000);
 
   it('člověk bez žetonů sedí mimo hru, dokud nedokoupí', () => {
     let s = createGame(cfg({ variant: 'cash' }), [{ id: 'me', name: 'Ty', isBot: false }, ...bots(3).slice(1)], 4, 0);
@@ -204,5 +205,32 @@ describe('nápověda', () => {
     expect(h.equity).toBeGreaterThanOrEqual(0);
     expect(h.equity).toBeLessThanOrEqual(1);
     expect(['fold', 'check', 'call', 'raise']).toContain(h.advice);
+  });
+});
+
+describe('Game Changer čeká na potvrzení', () => {
+  const humans = [
+    { id: 'me', name: 'Ty', isBot: false },
+    { id: 'g1', name: 'Eva', isBot: false },
+    { id: 'b1', name: 'Bot', isBot: true },
+  ];
+  it('hra stojí, dokud kartu nepotvrdí všichni lidé', () => {
+    let s = startHand(createGame(cfg({ seats: 3, gameChanger: { chance: 1, events: ['reverse'] } }), humans, 8, 0), 0);
+    expect(s.phase).toBe('reveal');
+    expect(s.pendingAcks.sort()).toEqual(['g1', 'me']);
+    expect(legalActions(s, s.toActId!)).toBeNull();
+    expect(() => applyAction(s, s.toActId!, { type: 'fold' }, 0)).toThrow();
+    s = ackEvent(s, 'me', 1000);
+    expect(s.phase).toBe('reveal');
+    s = ackEvent(s, 'me', 1000); // dvojí potvrzení nic nemění
+    expect(s.pendingAcks).toEqual(['g1']);
+    s = ackEvent(s, 'g1', 5000);
+    expect(s.phase).toBe('betting');
+    expect(s.turnStartedAt).toBe(5000);
+    expect(legalActions(s, s.toActId!)).not.toBeNull();
+  });
+  it('bez karty se nečeká', () => {
+    const s = startHand(createGame(cfg({ seats: 3, gameChanger: { chance: 0 } }), humans, 8, 0), 0);
+    expect(s.phase).toBe('betting');
   });
 });

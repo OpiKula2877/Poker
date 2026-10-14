@@ -9,6 +9,7 @@ import {
   PING_MS,
   PROTOCOL_VERSION,
   SILENCE_MS,
+  cleanAvatar,
   makeRoomCode,
   parseClientMsg,
   viewFor,
@@ -28,6 +29,7 @@ interface Guest {
   token: string;
   conn: Conn | null;
   lastSeen: number;
+  avatar: string | null;
 }
 
 export type HostStatus = 'opening' | 'open' | 'error' | 'closed';
@@ -47,6 +49,8 @@ export class HostRoom {
   onAction?: (playerId: string, action: Action) => void;
   /** Cash game: hráč chce dokoupit žetony. */
   onRebuy?: (playerId: string) => void;
+  /** Hráč potvrdil Game Changer kartu. */
+  onAck?: (playerId: string) => void;
 
   private settings: Settings;
   private peer: Peer | null = null;
@@ -140,6 +144,7 @@ export class HostRoom {
         if (known.conn && known.conn !== conn) known.conn.close();
         known.conn = conn;
         known.lastSeen = Date.now();
+        known.avatar = msg.avatar ?? known.avatar;
       } else {
         if (this.started) {
           conn.send({ t: 'reject', reason: 'Turnaj už běží. Počkej na další hru.' });
@@ -149,7 +154,7 @@ export class HostRoom {
           conn.send({ t: 'reject', reason: 'Stůl je plný.' });
           return;
         }
-        this.guests.push({ id: 'g' + ++this.guestSeq, name: this.uniqueName(cleanName(msg.name)), token: msg.token, conn, lastSeen: Date.now() });
+        this.guests.push({ id: 'g' + ++this.guestSeq, name: this.uniqueName(cleanName(msg.name)), token: msg.token, conn, lastSeen: Date.now(), avatar: msg.avatar ?? null });
       }
       const g = this.guests.find((x) => x.conn === conn)!;
       conn.send({ t: 'welcome', id: g.id });
@@ -165,6 +170,7 @@ export class HostRoom {
     else if (msg.t === 'chat') this.addChat(guest.name, msg.text);
     else if (msg.t === 'leave') this.handleClose(conn);
     else if (msg.t === 'rebuy') this.onRebuy?.(guest.id);
+    else if (msg.t === 'ack') this.onAck?.(guest.id);
   }
 
   /** Kdo se dlouho neozval, je odpojený (zavřená karta se přes WebRTC nemusí ohlásit hned). */
@@ -201,11 +207,11 @@ export class HostRoom {
   roomInfo(): RoomInfo {
     return {
       code: this.code,
-      settings: this.settings,
+      settings: { ...this.settings, avatar: null },
       started: this.started,
       players: [
-        { id: HOST_PLAYER_ID, name: this.hostName, connected: true, isHost: true },
-        ...this.guests.map((g) => ({ id: g.id, name: g.name, connected: !!g.conn, isHost: false })),
+        { id: HOST_PLAYER_ID, name: this.hostName, connected: true, isHost: true, avatar: cleanAvatar(this.settings.avatar) },
+        ...this.guests.map((g) => ({ id: g.id, name: g.name, connected: !!g.conn, isHost: false, avatar: g.avatar })),
       ],
     };
   }

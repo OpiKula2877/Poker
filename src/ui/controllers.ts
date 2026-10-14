@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { type Action, type GameState, legalActions } from '../engine/game';
 import type { ClientRoom } from '../net/client';
 import { HOST_PLAYER_ID, type HostRoom } from '../net/host';
-import type { ChatMsg } from '../net/protocol';
+import type { ChatMsg, RoomPlayer } from '../net/protocol';
 import { type Settings, cleanName, settingsToConfig } from '../settings';
 import { type HeroStats, type PreAction, HERO_ID, buildGame, useEngine, useHeroStats } from './useGame';
 
@@ -25,6 +25,16 @@ export interface GameController {
   hints?: boolean;
   /** Cash game: dokoupit žetony. */
   rebuy?: () => void;
+  /** Potvrdit, že jsem si přečetl Game Changer kartu. */
+  ack: () => void;
+  /** Profilové obrázky podle id hráče. */
+  avatars: Record<string, string>;
+}
+
+function avatarMap(players: RoomPlayer[]): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const p of players) if (p.avatar) out[p.id] = p.avatar;
+  return out;
 }
 
 /** Překreslí komponentu při každé změně stolu / připojení. */
@@ -54,6 +64,8 @@ export function useLocalController(settings: Settings): GameController {
     away,
     hints: settings.hints,
     rebuy: () => engine.rebuyFor(HERO_ID),
+    ack: () => engine.ackFor(HERO_ID),
+    avatars: settings.avatar ? { [HERO_ID]: settings.avatar } : {},
   };
 }
 
@@ -75,15 +87,17 @@ export function useHostController(room: HostRoom, settings: Settings): GameContr
     awayKey: [...away].sort().join(),
     onState: (g, paused) => room.broadcastState(g, paused),
   });
-  const { actFor, rebuyFor } = engine;
+  const { actFor, rebuyFor, ackFor } = engine;
   useEffect(() => {
     room.onAction = actFor;
     room.onRebuy = rebuyFor;
+    room.onAck = ackFor;
     return () => {
       room.onAction = undefined;
       room.onRebuy = undefined;
+      room.onAck = undefined;
     };
-  }, [room, actFor, rebuyFor]);
+  }, [room, actFor, rebuyFor, ackFor]);
   const stats = useHeroStats(engine.game, HOST_PLAYER_ID);
   return {
     game: engine.game,
@@ -99,6 +113,8 @@ export function useHostController(room: HostRoom, settings: Settings): GameContr
     chat: { messages: room.chat, send: (t) => room.addChat(room.hostName, t) },
     online: { code: room.code, role: 'host' },
     rebuy: () => rebuyFor(HOST_PLAYER_ID),
+    ack: () => ackFor(HOST_PLAYER_ID),
+    avatars: avatarMap(room.roomInfo().players),
   };
 }
 
@@ -137,5 +153,7 @@ export function useClientController(room: ClientRoom): GameController {
     chat: { messages: room.chat, send: (t) => room.sendChat(t) },
     online: { code: room.code, role: 'guest' },
     rebuy: () => room.sendRebuy(),
+    ack: () => room.sendAck(),
+    avatars: avatarMap(room.room?.players ?? []),
   };
 }

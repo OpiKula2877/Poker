@@ -35,6 +35,14 @@ function initials(name: string) {
   return name.slice(0, 2).toUpperCase();
 }
 
+export function Avatar({ name, src, me }: { name: string; src?: string | null; me?: boolean }) {
+  return (
+    <div className={'av' + (me && !src ? ' me' : '')}>
+      {src ? <img src={src} alt="" /> : initials(name)}
+    </div>
+  );
+}
+
 interface SeatProps {
   p: PlayerState;
   x: number;
@@ -43,9 +51,10 @@ interface SeatProps {
   hits: Set<string>;
   winAmount?: number;
   away: boolean;
+  avatar?: string;
 }
 
-function Seat({ p, x, y, game, hits, winAmount, away }: SeatProps) {
+function Seat({ p, x, y, game, hits, winAmount, away, avatar }: SeatProps) {
   if (p.out) {
     return (
       <div className="seat" style={{ left: x, top: y }}>
@@ -58,11 +67,13 @@ function Seat({ p, x, y, game, hits, winAmount, away }: SeatProps) {
   }
   const active = game.toActId === p.id && game.phase === 'betting';
   const showOpen = p.showCards && p.hole.length > 0;
+  // Odhalená karta (Game Changer): karty se položí vedle sebe, aby byla vidět celá.
+  const anyFace = showOpen || (game.rules.revealFirst && p.hole[0]?.r > 0);
   const label = winAmount ? '+' + fmt(winAmount) : p.lastAction;
   const pos = p.id === game.sbId ? 'SB' : p.id === game.bbId ? 'BB' : null;
   return (
     <div className={'seat' + (p.folded ? ' folded' : '')} style={{ left: x, top: y }}>
-      <div className={'holes' + (showOpen ? ' open' : '')}>
+      <div className={'holes' + (anyFace ? ' open' : '')}>
         {p.inHand &&
           !p.folded &&
           p.hole.map((c, i) =>
@@ -74,7 +85,7 @@ function Seat({ p, x, y, game, hits, winAmount, away }: SeatProps) {
           )}
       </div>
       <div className={'plate' + (active ? ' active' : '') + (winAmount ? ' winner' : '')}>
-        <div className="av">{initials(p.name)}</div>
+        <Avatar name={p.name} src={avatar} />
         <div className="pm">
           <div className="pn">
             <span className="nm">{p.name}</span>
@@ -109,7 +120,21 @@ function Seat({ p, x, y, game, hits, winAmount, away }: SeatProps) {
   );
 }
 
-function HeroSeat({ p, game, hits, heroHandName, winAmount }: { p: PlayerState; game: GameState; hits: Set<string>; heroHandName: string | null; winAmount?: number }) {
+function HeroSeat({
+  p,
+  game,
+  hits,
+  heroHandName,
+  winAmount,
+  avatar,
+}: {
+  p: PlayerState;
+  game: GameState;
+  hits: Set<string>;
+  heroHandName: string | null;
+  winAmount?: number;
+  avatar?: string;
+}) {
   const active = game.toActId === p.id && game.phase === 'betting';
   const label = winAmount ? '+' + fmt(winAmount) : p.lastAction;
   const pos = p.id === game.sbId ? 'SB' : p.id === game.bbId ? 'BB' : null;
@@ -134,7 +159,7 @@ function HeroSeat({ p, game, hits, heroHandName, winAmount }: { p: PlayerState; 
       <div style={{ display: 'flex', alignItems: 'flex-end', gap: 10, marginTop: 14 }}>
         {label && <span className={'status ' + statusClass(label)} style={{ marginBottom: 14 }}>{label}</span>}
         <div className={'plate' + (active ? ' active' : '') + (winAmount ? ' winner' : '')} style={{ width: 188 }}>
-          <div className="av me">{initials(p.name)}</div>
+          <Avatar name={p.name} src={avatar} me />
           <div className="pm">
             <div className="pn">
               <span className="nm">{p.name}</span>
@@ -190,6 +215,23 @@ export function GameScreen({ ctl, onExit }: { ctl: GameController & { game: Game
   const now = useNow(500);
   const [spectating, setSpectating] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [sideOpen, setSideOpen] = useState(() => {
+    try {
+      return localStorage.getItem('poker.side') !== 'closed';
+    } catch {
+      return true;
+    }
+  });
+  const toggleSide = () => {
+    setSideOpen((o) => {
+      try {
+        localStorage.setItem('poker.side', o ? 'closed' : 'open');
+      } catch {
+        /* nevadí */
+      }
+      return !o;
+    });
+  };
 
   const n = game.players.length;
   const hero = game.players.find((p) => p.id === heroId)!;
@@ -307,6 +349,9 @@ export function GameScreen({ ctl, onExit }: { ctl: GameController & { game: Game
               {Icon.link(16)} {copied ? 'Zkopírováno' : 'Odkaz'}
             </button>
           )}
+          <button type="button" className="tb" onClick={toggleSide} aria-pressed={sideOpen} title={sideOpen ? 'Skrýt pravý panel' : 'Ukázat pravý panel'}>
+            {Icon.sidebar(16)} {sideOpen ? 'Skrýt panel' : 'Panel'}
+          </button>
           {togglePause ? (
             <button type="button" className="tb" onClick={togglePause} aria-pressed={paused}>
               {paused ? Icon.play(16) : Icon.pause(16)} {paused ? 'Pokračovat' : 'Pauza'}
@@ -320,6 +365,7 @@ export function GameScreen({ ctl, onExit }: { ctl: GameController & { game: Game
         </div>
       </header>
 
+      <div className="tablearea" style={{ transform: sideOpen ? 'none' : 'translateX(180px)' }}>
       <div className="rail">
         <div className="felt">
           <div className="feltmark" aria-hidden="true">
@@ -373,7 +419,7 @@ export function GameScreen({ ctl, onExit }: { ctl: GameController & { game: Game
         if (p.id === heroId) return null;
         const rel = (p.seat - hero.seat + n) % n;
         const pt = seatPoint(rel, n);
-        return <Seat key={p.id} p={p} x={pt.x} y={pt.y} game={game} hits={hits} winAmount={winAmounts.get(p.id)} away={away.has(p.id)} />;
+        return <Seat key={p.id} p={p} x={pt.x} y={pt.y} game={game} hits={hits} winAmount={winAmounts.get(p.id)} away={away.has(p.id)} avatar={ctl.avatars[p.id]} />;
       })}
 
       {!hero.out && (
@@ -382,13 +428,15 @@ export function GameScreen({ ctl, onExit }: { ctl: GameController & { game: Game
           game={game}
           hits={hits}
           winAmount={winAmounts.get(heroId)}
+          avatar={ctl.avatars[heroId]}
           heroHandName={heroHand && (game.board.length || heroHand.cat > 0) ? HAND_NAMES[heroHand.cat] : null}
         />
       )}
 
-      <GameChangerLayer game={game} />
+      <GameChangerLayer game={game} onAck={ctl.ack} />
       <ActionDock game={game} now={now} act={act} preAction={preAction} setPreAction={setPreAction} advice={hint?.advice ?? null} />
-      <SidePanel game={game} heroHand={heroHand} chat={ctl.chat} top={ctl.hints && hint ? <HintPanel hint={hint} /> : null} />
+      </div>
+      {sideOpen && <SidePanel game={game} heroHand={heroHand} chat={ctl.chat} top={ctl.hints && hint ? <HintPanel hint={hint} /> : null} />}
 
       {paused && !togglePause && <div className="pausemark">PAUZA</div>}
       {hero.out && spectating && game.phase !== 'gameOver' && (

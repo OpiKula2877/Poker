@@ -6,6 +6,7 @@ import {
   type GameConfig,
   type GameState,
   type PlayerSetup,
+  ackEvent,
   advance,
   applyAction,
   createGame,
@@ -95,6 +96,10 @@ export function useEngine(initial: () => GameState, opts: EngineOptions) {
         },
         fast ? 1600 : g.showdown?.uncontested ? 1800 : 3600,
       );
+    } else if (g.phase === 'reveal') {
+      // Odpojení hráči kartu potvrdit nemůžou – potvrdí se za ně.
+      const gone = g.pendingAcks.filter((id) => optsRef.current.isAway?.(id));
+      if (gone.length) timer = setTimeout(() => setGame((x) => gone.reduce((y, id) => ackEvent(y, id, Date.now()), x)), 300);
     } else if (g.phase === 'roundEnd') {
       const runout = g.players.some((p) => p.showCards) && g.street !== 'river';
       timer = setTimeout(() => setGame((x) => (x.phase === 'roundEnd' ? advance(x, Date.now()) : x)), runout ? 1300 : fast ? 450 : 750);
@@ -102,9 +107,7 @@ export function useEngine(initial: () => GameState, opts: EngineOptions) {
       const id = g.toActId;
       const p = g.players.find((x) => x.id === id)!;
       if (p.isBot) {
-        // Během odhalení Game Changer karty bot počká, až ji všichni uvidí.
-        const reveal = Math.max(0, g.turnStartedAt - Date.now());
-        const delay = reveal + (fast ? 250 + rng() * 400 : 550 + rng() * 950);
+        const delay = fast ? 250 + rng() * 400 : 550 + rng() * 950;
         timer = setTimeout(() => setGame((x) => (x.phase === 'betting' && x.toActId === id ? tryApply(x, id, decideBotAction(x, id, rng)) : x)), delay);
       } else {
         const legal = legalActions(g, id);
@@ -135,6 +138,7 @@ export function useEngine(initial: () => GameState, opts: EngineOptions) {
 
   const actFor = useCallback((id: string, a: Action) => setGame((x) => tryApply(x, id, a)), []);
   const rebuyFor = useCallback((id: string) => setGame((x) => rebuy(x, id)), []);
+  const ackFor = useCallback((id: string) => setGame((x) => ackEvent(x, id, Date.now())), []);
   const act = useCallback((a: Action) => actFor(heroId, a), [actFor, heroId]);
 
   const togglePause = useCallback(() => {
@@ -155,7 +159,7 @@ export function useEngine(initial: () => GameState, opts: EngineOptions) {
     setPreAction(null);
   }, []);
 
-  return { game, act, actFor, rebuyFor, paused, togglePause, preAction, setPreAction, reset };
+  return { game, act, actFor, rebuyFor, ackFor, paused, togglePause, preAction, setPreAction, reset };
 }
 
 // ---------- statistiky hráče ----------
