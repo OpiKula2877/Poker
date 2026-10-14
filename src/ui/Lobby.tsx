@@ -18,13 +18,6 @@ interface Props {
   onStartHost: () => void;
 }
 
-const STACKS = [1500, 5000, 10000, 25000];
-const BLINDS: [number, number][] = [
-  [10, 20],
-  [50, 100],
-];
-const LEVELS = [5, 10, 15];
-const TURNS = [10, 20, 30];
 const DIFFS: [number, string][] = [
   [0, 'Lehcí'],
   [1, 'Střední'],
@@ -284,11 +277,6 @@ export function Lobby({ settings: raw, onChange, onStartLocal, host, onCreateRoo
           <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
             <p className="lab">POČÁTEČNÍ ŽETONY PRO KAŽDÉHO</p>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-              {STACKS.map((v) => (
-                <button key={v} type="button" className={seg(st.startStack === v)} disabled={fixed} onClick={() => set({ startStack: v })}>
-                  {fmt(v)}
-                </button>
-              ))}
               <NumField value={st.startStack} min={10} max={10_000_000} disabled={fixed} width={120} label="Vlastní počet žetonů" onCommit={(v) => set({ startStack: v })} />
               <div style={{ flexGrow: 1 }} />
               <ChipStack amount={st.startStack} />
@@ -300,11 +288,6 @@ export function Lobby({ settings: raw, onChange, onStartLocal, host, onCreateRoo
             <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
               <p className="lab">BLINDY NA ZAČÁTKU</p>
               <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                {BLINDS.map(([s, b]) => (
-                  <button key={b} type="button" className={seg(st.startBb === b)} disabled={fixed} onClick={() => set({ startBb: b })}>
-                    {s} / {b}
-                  </button>
-                ))}
                 <NumField value={st.startBb} min={2} max={1_000_000} disabled={fixed} unit="BB" width={72} label="Vlastní big blind" onCommit={(v) => set({ startBb: v })} />
               </div>
               <span style={{ fontSize: 11, color: 'var(--muted)' }}>
@@ -314,11 +297,6 @@ export function Lobby({ settings: raw, onChange, onStartLocal, host, onCreateRoo
             <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
               <p className="lab">{cash ? "BLINDY NEROSTOU (CASH GAME)" : "ZVÝŠENÍ BLINDŮ KAŽDÝCH"}</p>
               <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                {LEVELS.map((m) => (
-                  <button key={m} type="button" className={seg(st.levelMinutes === m && !cash)} disabled={fixed || cash} onClick={() => set({ levelMinutes: m })}>
-                    {m} min
-                  </button>
-                ))}
                 <NumField value={st.levelMinutes} min={1} max={240} disabled={fixed || cash} unit="min" width={56} label="Vlastní délka levelu" onCommit={(v) => set({ levelMinutes: v })} />
               </div>
             </div>
@@ -328,11 +306,6 @@ export function Lobby({ settings: raw, onChange, onStartLocal, host, onCreateRoo
             <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
               <p className="lab">ČAS NA TAH</p>
               <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                {TURNS.map((s) => (
-                  <button key={s} type="button" className={seg(st.turnSeconds === s)} onClick={() => set({ turnSeconds: s })}>
-                    {s} s
-                  </button>
-                ))}
                 <NumField value={st.turnSeconds} min={5} max={300} unit="s" width={56} label="Vlastní čas na tah" onCommit={(v) => set({ turnSeconds: v })} />
               </div>
             </div>
