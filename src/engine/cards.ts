@@ -81,6 +81,11 @@ export function shuffle<T>(items: T[], rng: () => number): T[] {
   return a;
 }
 
+/** Kryptografická náhoda v rozsahu [0, 1) – pro míchání ve skutečné hře. */
+export function cryptoRandom(): number {
+  return crypto.getRandomValues(new Uint32Array(1))[0] / 4294967296;
+}
+
 export function randomSeed(): number {
   if (typeof crypto !== 'undefined' && crypto.getRandomValues) {
     return crypto.getRandomValues(new Uint32Array(1))[0];

@@ -1,6 +1,6 @@
 import { HAND_NAMES } from '../engine/evaluator';
 import type { GameState } from '../engine/game';
-import { HERO_ID, type HeroStats } from './useGame';
+import { type HeroStats, useHeroId } from './useGame';
 import { Icon, MiniCard, fmt } from './parts';
 
 function duration(ms: number): string {
@@ -9,9 +9,10 @@ function duration(ms: number): string {
 }
 
 function LastHand({ snap }: { snap: GameState }) {
+  const heroId = useHeroId();
   const sd = snap.showdown;
   if (!sd) return null;
-  const mine = sd.hands[HERO_ID];
+  const mine = sd.hands[heroId];
   const winnerId = sd.winners[0]?.id;
   const theirs = winnerId ? sd.hands[winnerId] : undefined;
   const winner = snap.players.find((p) => p.id === winnerId);
@@ -58,7 +59,8 @@ export function EliminatedDialog({
   onWatch: () => void;
   onLeave: () => void;
 }) {
-  const hero = game.players.find((p) => p.id === HERO_ID)!;
+  const heroId = useHeroId();
+  const hero = game.players.find((p) => p.id === heroId)!;
   return (
     <>
       <div className="scrim" />
@@ -119,12 +121,14 @@ export function GameOverDialog({
 }: {
   game: GameState;
   stats: HeroStats;
-  onRestart: () => void;
+  /** Bez restartu (host online) zůstane jen odchod. */
+  onRestart?: () => void;
   onLeave: () => void;
 }) {
   const winner = game.players.find((p) => p.id === game.winnerId);
-  const hero = game.players.find((p) => p.id === HERO_ID)!;
-  const iWon = game.winnerId === HERO_ID;
+  const heroId = useHeroId();
+  const hero = game.players.find((p) => p.id === heroId)!;
+  const iWon = game.winnerId === heroId;
   return (
     <>
       <div className="scrim" />
@@ -153,9 +157,13 @@ export function GameOverDialog({
           </div>
         </div>
         <div className="two">
-          <button type="button" className="btn primary" onClick={onRestart} autoFocus>
-            Hrát znovu
-          </button>
+          {onRestart ? (
+            <button type="button" className="btn primary" onClick={onRestart} autoFocus>
+              Hrát znovu
+            </button>
+          ) : (
+            <span style={{ alignSelf: 'center', fontSize: 13, color: 'var(--muted)' }}>Novou hru může spustit hostitel.</span>
+          )}
           <button type="button" className="btn ghost" onClick={onLeave}>
             {Icon.exit(20)} Do lobby
           </button>

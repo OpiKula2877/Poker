@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { type Action, type GameState, currentBlinds, legalActions, potTotal } from '../engine/game';
-import { HERO_ID, type PreAction } from './useGame';
+import { type PreAction, useHeroId } from './useGame';
 import { fmt } from './parts';
 
 interface Props {
@@ -12,8 +12,9 @@ interface Props {
 }
 
 export function ActionDock({ game, now, act, preAction, setPreAction }: Props) {
-  const hero = game.players.find((p) => p.id === HERO_ID)!;
-  const legal = legalActions(game, HERO_ID);
+  const heroId = useHeroId();
+  const hero = game.players.find((p) => p.id === heroId)!;
+  const legal = legalActions(game, heroId);
   const myTurn = !!legal;
   const pot = potTotal(game);
   const step = currentBlinds(game).sb; // předvolby zaokrouhlené na small blind

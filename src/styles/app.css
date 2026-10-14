@@ -187,6 +187,12 @@ kbd { font-family: inherit; font-size: 11px; font-weight: 700; border: 1px solid
 .tabs { display: flex; border-bottom: 1px solid var(--border); flex: none; }
 .tab { flex: 1; height: 44px; border: 0; border-bottom: 2px solid transparent; background: transparent; color: var(--muted); font-size: 13px; font-weight: 700; cursor: pointer; }
 .tab.on { color: var(--text); border-bottom-color: var(--accent); }
+.badge { display: inline-block; margin-left: 6px; min-width: 18px; padding: 1px 5px; border-radius: 999px; background: var(--accent); color: var(--accent-text); font-size: 11px; }
+.tag.away { color: var(--amber); border-color: var(--amber); }
+.pausemark { position: absolute; left: 540px; top: 470px; transform: translateX(-50%); font-size: 13px; font-weight: 700; letter-spacing: .3em; color: var(--amber); z-index: 4; }
+.linkbox { flex-grow: 1; min-width: 0; height: 40px; padding: 0 12px; display: flex; align-items: center; background: var(--input); border: 1px solid var(--border); border-radius: 6px; font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.note { display: flex; align-items: flex-start; gap: 10px; padding: 12px; border: 1px dashed var(--border); border-radius: 6px; font-size: 12px; line-height: 1.5; color: var(--muted); }
+.st.away { background: var(--amber); }
 .tabbody { flex-grow: 1; min-height: 0; overflow: auto; padding: 14px 20px; scrollbar-width: thin; scrollbar-color: var(--border) transparent; }
 .logl { display: flex; gap: 8px; font-size: 13px; line-height: 1.5; animation: fadeUp .3s both; }
 .logl b { min-width: 70px; flex: none; }

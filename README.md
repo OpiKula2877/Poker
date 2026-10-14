@@ -1,6 +1,23 @@
 # Poker – Texas Hold'em
 
-Turnaj Texas Hold'em pro 2–9 hráčů v prohlížeči. Zatím se hraje proti botům; hra přes odkaz a vlastní server přijdou.
+Turnaj Texas Hold'em pro 2–9 hráčů v prohlížeči. Hraje se proti botům (i offline), nebo s přáteli přes odkaz. Vlastní server přijde.
+
+**Hrát:** https://opikula2877.github.io/Poker/
+
+## Hra s přáteli přes odkaz
+
+1. V lobby zvol **Přes odkaz** a klikni na **Vytvořit stůl**.
+2. Pošli odkaz (např. `…/Poker/#K7F2Q`) ostatním. Kdo ho otevře, zadá jméno a sedne si ke stolu.
+3. Až jsou všichni u stolu, klikni na **Spustit turnaj**. Volná místa můžou doplnit boti.
+
+Jak to funguje:
+
+- Hra běží v prohlížeči hostitele. Ostatní posílají jen své tahy a dostávají stav stolu, ve kterém vidí jen svoje karty.
+- Spojení se naváže přes veřejný server PeerJS; data pak tečou přímo mezi prohlížeči (WebRTC). Potřebuje to internet.
+- Kdo obnoví stránku nebo na chvíli vypadne, vrátí se na svoje místo (prohlížeč si pamatuje token stolu). Odpojeného hráče hra pozná do 10 s a za jeho tahy dává check, nebo fold.
+- Hostitel nesmí zavřít stránku – tím by hra skončila všem.
+- Hostitel má technicky v paměti všechny karty. Mezi kamarády to nevadí; pro hru s cizími lidmi bude lepší vlastní server.
+- V některých firemních nebo školních sítích se WebRTC spojení nenaváže.
 
 ## Spuštění
 
@@ -40,5 +57,6 @@ Stránka je PWA. V Chrome nebo Edge klikni na ikonu instalace v adresním řádk
 
 - `src/engine/` – pravidla bez UI (karty, vyhodnocení rukou, banky, průběh ruky, turnaj)
 - `src/bots/` – boti (odhad šance na výhru metodou Monte Carlo, 3 obtížnosti)
+- `src/net/` – hra přes odkaz: protokol, stůl hostitele, připojení hráče (PeerJS)
 - `src/ui/` – React obrazovky (lobby, stůl, panel kombinací, dialogy)
 - `src/styles/app.css` – vzhled podle design systému OK Apps

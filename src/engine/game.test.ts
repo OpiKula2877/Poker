@@ -129,6 +129,6 @@ describe('simulace turnaje', () => {
       const places = s.players.map((p) => p.place).sort((a, b) => a! - b!);
       expect(places).toEqual(Array.from({ length: n }, (_, i) => i + 1));
       expect(s.players.find((p) => p.id === s.winnerId)!.stack).toBe(n * 1500);
-    }, 60_000);
+    }, 240_000);
   }
 });

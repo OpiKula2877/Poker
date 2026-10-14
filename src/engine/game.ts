@@ -78,6 +78,8 @@ export interface LogEntry {
 }
 
 export interface GameState {
+  /** Náhodné ID hry (pro rozpoznání nové hry na klientovi). */
+  gameId: string;
   config: GameConfig;
   players: PlayerState[];
   seed: number;
@@ -223,6 +225,7 @@ export function createGame(config: GameConfig, setups: PlayerSetup[], seed: numb
     showCards: false,
   }));
   return {
+    gameId: Math.random().toString(36).slice(2, 10),
     config,
     players,
     seed,
@@ -251,7 +254,12 @@ export function createGame(config: GameConfig, setups: PlayerSetup[], seed: numb
 
 // ---------- ruka ----------
 
-export function startHand(prev: GameState, now: number): GameState {
+/**
+ * Začne další ruku. `random` = zdroj náhody pro míchání; bez něj se použije
+ * seed hry (deterministické, pro testy). Ve skutečné hře se předává
+ * kryptografická náhoda, aby nešlo balíček dopočítat z 32bitového seedu.
+ */
+export function startHand(prev: GameState, now: number, random?: () => number): GameState {
   const s = clone(prev);
   if (s.phase === 'gameOver') return s;
 
@@ -279,7 +287,7 @@ export function startHand(prev: GameState, now: number): GameState {
   }
 
   const active = s.players.filter((p) => !p.out);
-  const rng = createRng((s.seed + Math.imul(s.handNo, 0x9e3779b1)) >>> 0);
+  const rng = random ?? createRng((s.seed + Math.imul(s.handNo, 0x9e3779b1)) >>> 0);
 
   // Dealer se posouvá na dalšího hráče ve hře.
   if (!s.dealerId) s.dealerId = active[Math.floor(rng() * active.length)].id;

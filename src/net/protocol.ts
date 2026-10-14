@@ -1,0 +1,116 @@
+import type { Card } from '../engine/cards';
+import type { Action, GameState } from '../engine/game';
+import type { Settings } from '../settings';
+
+export const PROTOCOL_VERSION = 1;
+/** Předpona ID na zprostředkovacím serveru PeerJS, aby se kódy nepletly s cizími aplikacemi. */
+export const PEER_PREFIX = 'okpoker-';
+
+const ALPHABET = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789'; // bez 0/O, 1/I/L
+export const CODE_LENGTH = 5;
+
+export function makeRoomCode(rng: () => number = Math.random): string {
+  let code = '';
+  for (let i = 0; i < CODE_LENGTH; i++) code += ALPHABET[Math.floor(rng() * ALPHABET.length)];
+  return code;
+}
+
+export function normalizeCode(text: string): string | null {
+  const code = text.replace(/^#\/?/, '').trim().toUpperCase();
+  if (code.length !== CODE_LENGTH) return null;
+  return [...code].every((c) => ALPHABET.includes(c)) ? code : null;
+}
+
+export function joinLink(code: string): string {
+  const { origin, pathname } = window.location;
+  return `${origin}${pathname}#${code}`;
+}
+
+export interface RoomPlayer {
+  id: string;
+  name: string;
+  connected: boolean;
+  isHost: boolean;
+}
+
+export interface RoomInfo {
+  code: string;
+  players: RoomPlayer[];
+  settings: Settings;
+  started: boolean;
+}
+
+export interface ChatMsg {
+  n: number;
+  from: string;
+  text: string;
+}
+
+export type ClientMsg =
+  | { t: 'hello'; v: number; name: string; token: string }
+  | { t: 'action'; action: Action }
+  | { t: 'chat'; text: string }
+  | { t: 'leave' }
+  | { t: 'ping' };
+
+/** Jak často si strany posílají ping a po jaké době ticha se spojení bere jako ztracené. */
+export const PING_MS = 3000;
+export const SILENCE_MS = 9000;
+
+export type HostMsg =
+  | { t: 'welcome'; id: string }
+  | { t: 'reject'; reason: string }
+  | { t: 'room'; room: RoomInfo }
+  | { t: 'state'; game: GameState; paused: boolean; hostNow: number }
+  | { t: 'chat'; messages: ChatMsg[] }
+  | { t: 'closed'; reason: string }
+  | { t: 'ping' };
+
+const HIDDEN: Card = { r: 0, s: 's' };
+
+/**
+ * Stav hry tak, jak ho smí vidět jeden hráč: cizí karty v ruce, balíček
+ * a seed (z něj by šel balíček dopočítat) se nahradí prázdnými hodnotami.
+ */
+export function viewFor(s: GameState, playerId: string): GameState {
+  return {
+    ...s,
+    seed: 0,
+    deck: s.deck.map(() => HIDDEN),
+    players: s.players.map((p) => (p.id === playerId || p.showCards ? p : { ...p, hole: p.hole.map(() => HIDDEN) })),
+  };
+}
+
+/** Ověří zprávu od klienta; cokoli podezřelého zahodí. */
+export function parseClientMsg(raw: unknown): ClientMsg | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const m = raw as Record<string, unknown>;
+  switch (m.t) {
+    case 'hello':
+      if (typeof m.name !== 'string' || typeof m.token !== 'string' || typeof m.v !== 'number') return null;
+      if (m.token.length < 8 || m.token.length > 64) return null;
+      return { t: 'hello', v: m.v, name: m.name.slice(0, 40), token: m.token };
+    case 'action': {
+      const a = m.action as Record<string, unknown> | undefined;
+      if (!a || typeof a !== 'object') return null;
+      if (a.type === 'fold' || a.type === 'check' || a.type === 'call' || a.type === 'allin') return { t: 'action', action: { type: a.type } };
+      if (a.type === 'raise' && typeof a.to === 'number' && Number.isFinite(a.to)) return { t: 'action', action: { type: 'raise', to: a.to } };
+      return null;
+    }
+    case 'chat':
+      if (typeof m.text !== 'string') return null;
+      return { t: 'chat', text: m.text.slice(0, 200) };
+    case 'leave':
+      return { t: 'leave' };
+    case 'ping':
+      return { t: 'ping' };
+    default:
+      return null;
+  }
+}
+
+export function randomToken(): string {
+  const bytes = new Uint8Array(16);
+  crypto.getRandomValues(bytes);
+  return [...bytes].map((b) => b.toString(16).padStart(2, '0')).join('');
+}

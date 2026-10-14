@@ -1,130 +1,95 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
 import { decideBotAction } from '../bots/bot';
-import { createRng, randomSeed, shuffle } from '../engine/cards';
+import { createRng, cryptoRandom, randomSeed, shuffle } from '../engine/cards';
 import {
   type Action,
+  type GameConfig,
   type GameState,
   type PlayerSetup,
   advance,
   applyAction,
   createGame,
   legalActions,
-  makeBlindLevels,
   startHand,
 } from '../engine/game';
 
 export const HERO_ID = 'me';
 
-export interface Settings {
-  name: string;
-  seats: number;
-  startStack: number;
-  startBb: number;
-  levelMinutes: number;
-  turnSeconds: number;
-  /** 0–2, nebo -1 = mix. */
-  botLevel: number;
-}
-
-export const DEFAULT_SETTINGS: Settings = {
-  name: 'Ty',
-  seats: 9,
-  startStack: 10000,
-  startBb: 100,
-  levelMinutes: 10,
-  turnSeconds: 20,
-  botLevel: 1,
-};
+/** Kdo sedí u tohoto zařízení (hostitel 'me', host online 'g1'…). */
+export const HeroContext = createContext<string>(HERO_ID);
+export const useHeroId = () => useContext(HeroContext);
 
 const BOT_NAMES = ['Ada', 'Viktor', 'Hugo', 'Klára', 'Marek', 'Tomáš', 'Jana', 'Luka', 'Eva', 'Petr', 'Ema', 'Ondra'];
 
 export type PreAction = 'checkfold' | 'callany' | null;
 
-export interface HeroStats {
-  maxStack: number;
-  bestCat: number;
-  handsPlayed: number;
-  startedAt: number;
-  endedAt: number | null;
-  /** Snímek ruky, ve které hráč vypadl. */
-  lastHand: GameState | null;
-}
-
-function setupGame(settings: Settings): GameState {
+/** Lidé u stolu + boti do zadaného počtu míst. */
+export function buildGame(config: GameConfig, humans: { id: string; name: string }[], botLevel: number): GameState {
   const seed = randomSeed();
   const rng = createRng(seed ^ 0x5bd1e995);
-  const names = shuffle(BOT_NAMES, rng);
-  const players: PlayerSetup[] = [{ id: HERO_ID, name: settings.name.trim() || 'Ty', isBot: false }];
-  for (let i = 1; i < settings.seats; i++) {
-    players.push({
-      id: 'bot' + i,
-      name: names[i - 1],
-      isBot: true,
-      botLevel: settings.botLevel < 0 ? i % 3 : settings.botLevel,
-    });
-  }
-  return createGame(
-    {
-      seats: settings.seats,
-      startStack: settings.startStack,
-      blinds: makeBlindLevels(settings.startBb),
-      levelMinutes: settings.levelMinutes,
-      turnSeconds: settings.turnSeconds,
-    },
-    players,
-    seed,
-    Date.now(),
+  const taken = new Set(humans.map((h) => h.name));
+  const names = shuffle(
+    BOT_NAMES.filter((n) => !taken.has(n)),
+    rng,
   );
+  const players: PlayerSetup[] = humans.map((h) => ({ id: h.id, name: h.name, isBot: false }));
+  for (let i = 1; players.length < config.seats; i++) {
+    players.push({ id: 'bot' + i, name: names[(i - 1) % names.length], isBot: true, botLevel: botLevel < 0 ? i % 3 : botLevel });
+  }
+  return createGame(config, players, seed, Date.now());
 }
 
-/** Herní smyčka pro hru proti botům: tahy botů, časový limit, přechody mezi koly. */
-export function useGame(settings: Settings) {
-  const [game, setGame] = useState<GameState>(() => setupGame(settings));
+/** Bezpečné provedení akce (neplatná akce od vzdáleného hráče stav nezmění). */
+function tryApply(x: GameState, id: string, a: Action): GameState {
+  if (x.phase !== 'betting' || x.toActId !== id) return x;
+  try {
+    return applyAction(x, id, a, Date.now());
+  } catch {
+    return x;
+  }
+}
+
+interface EngineOptions {
+  heroId: string;
+  /** Odpojený hráč: místo celého limitu se za něj rozhodne po pár sekundách. */
+  isAway?: (id: string) => boolean;
+  /** Mění se, když se někdo odpojí/připojí → tah se přeplánuje. */
+  awayKey?: string;
+  onState?: (game: GameState, paused: boolean) => void;
+}
+
+/** Herní smyčka u hostitele (nebo offline): tahy botů, časové limity, přechody mezi koly. */
+export function useEngine(initial: () => GameState, opts: EngineOptions) {
+  const { heroId } = opts;
+  const [game, setGame] = useState<GameState>(initial);
   const [paused, setPaused] = useState(false);
   const [preAction, setPreAction] = useState<PreAction>(null);
   const rngRef = useRef(createRng(randomSeed()));
   const pausedAt = useRef(0);
-  const stats = useRef<HeroStats>({
-    maxStack: settings.startStack,
-    bestCat: -1,
-    handsPlayed: 0,
-    startedAt: Date.now(),
-    endedAt: null,
-    lastHand: null,
-  });
+  const optsRef = useRef(opts);
+  optsRef.current = opts;
 
-  const hero = game.players.find((p) => p.id === HERO_ID)!;
-  const heroOut = hero.out;
+  const hero = game.players.find((p) => p.id === heroId);
+  const heroOut = hero?.out ?? true;
 
-  // Statistiky hráče.
   useEffect(() => {
-    const st = stats.current;
-    st.maxStack = Math.max(st.maxStack, hero.stack);
-    if (game.phase === 'handEnd' || game.phase === 'gameOver') {
-      const h = game.showdown?.hands[HERO_ID];
-      if (h) st.bestCat = Math.max(st.bestCat, h.cat);
-      if (!st.endedAt && (hero.out || game.phase === 'gameOver')) {
-        st.endedAt = Date.now();
-        st.lastHand = game;
-        st.handsPlayed = game.handNo;
-      }
-    }
-  }, [game, hero]);
+    optsRef.current.onState?.(game, paused);
+  }, [game, paused]);
 
   useEffect(() => {
     if (paused) return;
-    const fast = heroOut;
+    const fast = heroOut && !game.players.some((p) => !p.isBot && !p.out && p.id !== heroId);
     let timer: ReturnType<typeof setTimeout> | undefined;
     const g = game;
     const rng = rngRef.current;
 
     if (g.phase === 'waiting') {
-      timer = setTimeout(() => setGame((x) => (x.phase === 'waiting' ? startHand(x, Date.now()) : x)), 500);
+      timer = setTimeout(() => setGame((x) => (x.phase === 'waiting' ? startHand(x, Date.now(), cryptoRandom) : x)), 800);
     } else if (g.phase === 'handEnd') {
       timer = setTimeout(
         () => {
           setPreAction(null);
-          setGame((x) => (x.phase === 'handEnd' ? startHand(x, Date.now()) : x));
+          setGame((x) => (x.phase === 'handEnd' ? startHand(x, Date.now(), cryptoRandom) : x));
         },
         fast ? 1600 : g.showdown?.uncontested ? 1800 : 3600,
       );
@@ -136,31 +101,25 @@ export function useGame(settings: Settings) {
       const p = g.players.find((x) => x.id === id)!;
       if (p.isBot) {
         const delay = fast ? 250 + rng() * 400 : 550 + rng() * 950;
-        timer = setTimeout(
-          () =>
-            setGame((x) => {
-              if (x.phase !== 'betting' || x.toActId !== id) return x;
-              return applyAction(x, id, decideBotAction(x, id, rng), Date.now());
-            }),
-          delay,
-        );
+        timer = setTimeout(() => setGame((x) => (x.phase === 'betting' && x.toActId === id ? tryApply(x, id, decideBotAction(x, id, rng)) : x)), delay);
       } else {
         const legal = legalActions(g, id);
-        if (preAction && legal) {
+        if (id === heroId && preAction && legal) {
           const a: Action =
             preAction === 'checkfold' ? (legal.canCheck ? { type: 'check' } : { type: 'fold' }) : legal.canCheck ? { type: 'check' } : { type: 'call' };
           timer = setTimeout(() => {
             setPreAction(null);
-            setGame((x) => (x.toActId === id ? applyAction(x, id, a, Date.now()) : x));
+            setGame((x) => tryApply(x, id, a));
           }, 250);
         } else {
-          const left = g.config.turnSeconds * 1000 - (Date.now() - g.turnStartedAt);
+          let left = g.config.turnSeconds * 1000 - (Date.now() - g.turnStartedAt);
+          if (optsRef.current.isAway?.(id)) left = Math.min(left, 2500);
           timer = setTimeout(
             () =>
               setGame((x) => {
                 if (x.toActId !== id || x.turnStartedAt !== g.turnStartedAt) return x;
                 const l = legalActions(x, id);
-                return applyAction(x, id, l?.canCheck ? { type: 'check' } : { type: 'fold' }, Date.now());
+                return tryApply(x, id, l?.canCheck ? { type: 'check' } : { type: 'fold' });
               }),
             Math.max(0, left),
           );
@@ -168,11 +127,10 @@ export function useGame(settings: Settings) {
       }
     }
     return () => clearTimeout(timer);
-  }, [game, paused, heroOut, preAction]);
+  }, [game, paused, heroOut, preAction, heroId, opts.awayKey]);
 
-  const act = useCallback((a: Action) => {
-    setGame((x) => (x.phase === 'betting' && x.toActId === HERO_ID ? applyAction(x, HERO_ID, a, Date.now()) : x));
-  }, []);
+  const actFor = useCallback((id: string, a: Action) => setGame((x) => tryApply(x, id, a)), []);
+  const act = useCallback((a: Action) => actFor(heroId, a), [actFor, heroId]);
 
   const togglePause = useCallback(() => {
     setPaused((p) => {
@@ -186,12 +144,54 @@ export function useGame(settings: Settings) {
     });
   }, []);
 
-  const restart = useCallback(() => {
-    setGame(setupGame(settings));
+  const reset = useCallback((next: GameState) => {
+    setGame(next);
     setPaused(false);
     setPreAction(null);
-    stats.current = { maxStack: settings.startStack, bestCat: -1, handsPlayed: 0, startedAt: Date.now(), endedAt: null, lastHand: null };
-  }, [settings]);
+  }, []);
 
-  return { game, act, paused, togglePause, preAction, setPreAction, stats: stats.current, restart };
+  return { game, act, actFor, paused, togglePause, preAction, setPreAction, reset };
+}
+
+// ---------- statistiky hráče ----------
+
+export interface HeroStats {
+  maxStack: number;
+  bestCat: number;
+  handsPlayed: number;
+  startedAt: number;
+  endedAt: number | null;
+  /** Snímek ruky, ve které hráč vypadl. */
+  lastHand: GameState | null;
+}
+
+export function useHeroStats(game: GameState | null, heroId: string): HeroStats {
+  const fresh = (): HeroStats => ({ maxStack: 0, bestCat: -1, handsPlayed: 0, startedAt: Date.now(), endedAt: null, lastHand: null });
+  const stats = useRef<HeroStats>(fresh());
+  const gameId = useRef<string | null>(null);
+
+  // Nová hra → statistiky od nuly.
+  if (game && game.gameId !== gameId.current) {
+    gameId.current = game.gameId;
+    stats.current = fresh();
+  }
+
+  useEffect(() => {
+    if (!game) return;
+    const hero = game.players.find((p) => p.id === heroId);
+    if (!hero) return;
+    const st = stats.current;
+    st.maxStack = Math.max(st.maxStack, hero.stack + hero.committed);
+    if (game.phase === 'handEnd' || game.phase === 'gameOver') {
+      const h = game.showdown?.hands[heroId];
+      if (h) st.bestCat = Math.max(st.bestCat, h.cat);
+      if (!st.endedAt && (hero.out || game.phase === 'gameOver')) {
+        st.endedAt = Date.now();
+        st.lastHand = game;
+        st.handsPlayed = game.handNo;
+      }
+    }
+  }, [game, heroId]);
+
+  return stats.current;
 }

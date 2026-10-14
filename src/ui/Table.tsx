@@ -5,7 +5,9 @@ import { type GameState, type PlayerState, currentBlinds, potTotal } from '../en
 import { ActionDock } from './ActionDock';
 import { EliminatedDialog, GameOverDialog, SpectatorBar } from './Overlays';
 import { SidePanel } from './SidePanel';
-import { HERO_ID, type Settings, useGame } from './useGame';
+import { HeroContext } from './useGame';
+import type { GameController } from './controllers';
+import { joinLink } from '../net/protocol';
 import { CardBack, CardFace, ChipStack, Icon, fmt, useNow } from './parts';
 
 const CX = 540;
@@ -37,9 +39,10 @@ interface SeatProps {
   game: GameState;
   hits: Set<string>;
   winAmount?: number;
+  away: boolean;
 }
 
-function Seat({ p, x, y, game, hits, winAmount }: SeatProps) {
+function Seat({ p, x, y, game, hits, winAmount, away }: SeatProps) {
   if (p.out) {
     return (
       <div className="seat" style={{ left: x, top: y }}>
@@ -68,6 +71,7 @@ function Seat({ p, x, y, game, hits, winAmount }: SeatProps) {
           <div className="pn">
             <span className="nm">{p.name}</span>
             {p.isBot && <span className="tag">BOT</span>}
+            {away && <span className="tag away">PRYČ</span>}
             {pos && <span className="tag">{pos}</span>}
           </div>
           <div className="ps">{fmt(p.stack)}</div>
@@ -79,7 +83,13 @@ function Seat({ p, x, y, game, hits, winAmount }: SeatProps) {
         )}
         {active && (
           <div className="timer">
-            <i key={game.turnStartedAt} style={{ animationDuration: '1.5s' }} />
+            <i
+              key={game.turnStartedAt}
+              style={{
+                animationDuration: (p.isBot ? 1.5 : game.config.turnSeconds) + 's',
+                animationDelay: p.isBot ? '0s' : -(Date.now() - game.turnStartedAt) / 1000 + 's',
+              }}
+            />
           </div>
         )}
       </div>
@@ -118,7 +128,10 @@ function HeroSeat({ p, game, hits, heroHandName, winAmount }: { p: PlayerState; 
           {game.dealerId === p.id && <div className="dbtn">D</div>}
           {active && (
             <div className="timer">
-              <i key={game.turnStartedAt} style={{ animationDuration: game.config.turnSeconds + 's' }} />
+              <i
+                key={game.turnStartedAt}
+                style={{ animationDuration: game.config.turnSeconds + 's', animationDelay: -(Date.now() - game.turnStartedAt) / 1000 + 's' }}
+              />
             </div>
           )}
         </div>
@@ -154,13 +167,14 @@ function Board({ game, hits, fadeOthers }: { game: GameState; hits: Set<string>;
   );
 }
 
-export function GameScreen({ settings, onExit }: { settings: Settings; onExit: () => void }) {
-  const { game, act, paused, togglePause, preAction, setPreAction, stats, restart } = useGame(settings);
+export function GameScreen({ ctl, onExit }: { ctl: GameController & { game: GameState }; onExit: () => void }) {
+  const { game, act, paused, togglePause, preAction, setPreAction, stats, restart, heroId, away } = ctl;
   const now = useNow(500);
   const [spectating, setSpectating] = useState(false);
+  const [copied, setCopied] = useState(false);
 
   const n = game.players.length;
-  const hero = game.players.find((p) => p.id === HERO_ID)!;
+  const hero = game.players.find((p) => p.id === heroId)!;
   const blinds = currentBlinds(game);
   const pot = potTotal(game);
   const bets = game.players.reduce((s, p) => s + p.bet, 0);
@@ -199,13 +213,20 @@ export function GameScreen({ settings, onExit }: { settings: Settings; onExit: (
   const left = game.players.filter((p) => !p.out).length;
   const heroPlace = hero.place;
 
+  const copyLink = () => {
+    if (!ctl.online) return;
+    copyText(joinLink(ctl.online.code));
+    setCopied(true);
+    setTimeout(() => setCopied(false), 1500);
+  };
+
   return (
-    <>
+    <HeroContext.Provider value={heroId}>
       <header className="topbar">
         <div className="brand">
           <span className="sq" />
           <b>POKER</b>
-          <span>Texas Hold'em · turnaj</span>
+          <span>{ctl.online ? `Online · stůl ${ctl.online.code}` : "Texas Hold'em · turnaj"}</span>
         </div>
         <div className="tinfo">
           <div>
@@ -237,9 +258,18 @@ export function GameScreen({ settings, onExit }: { settings: Settings; onExit: (
           </div>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-          <button type="button" className="tb" onClick={togglePause} aria-pressed={paused}>
-            {paused ? Icon.play(16) : Icon.pause(16)} {paused ? 'Pokračovat' : 'Pauza'}
-          </button>
+          {ctl.online && (
+            <button type="button" className="tb" onClick={copyLink}>
+              {Icon.link(16)} {copied ? 'Zkopírováno' : 'Odkaz'}
+            </button>
+          )}
+          {togglePause ? (
+            <button type="button" className="tb" onClick={togglePause} aria-pressed={paused}>
+              {paused ? Icon.play(16) : Icon.pause(16)} {paused ? 'Pokračovat' : 'Pauza'}
+            </button>
+          ) : (
+            paused && <span style={{ fontSize: 13, color: 'var(--amber)', fontWeight: 700 }}>Hostitel dal pauzu</span>
+          )}
           <button type="button" className="tb" onClick={onExit}>
             {Icon.exit(16)} Opustit
           </button>
@@ -296,10 +326,10 @@ export function GameScreen({ settings, onExit }: { settings: Settings; onExit: (
       })}
 
       {game.players.map((p) => {
-        if (p.id === HERO_ID) return null;
+        if (p.id === heroId) return null;
         const rel = (p.seat - hero.seat + n) % n;
         const pt = seatPoint(rel, n);
-        return <Seat key={p.id} p={p} x={pt.x} y={pt.y} game={game} hits={hits} winAmount={winAmounts.get(p.id)} />;
+        return <Seat key={p.id} p={p} x={pt.x} y={pt.y} game={game} hits={hits} winAmount={winAmounts.get(p.id)} away={away.has(p.id)} />;
       })}
 
       {!hero.out && (
@@ -307,14 +337,15 @@ export function GameScreen({ settings, onExit }: { settings: Settings; onExit: (
           p={hero}
           game={game}
           hits={hits}
-          winAmount={winAmounts.get(HERO_ID)}
+          winAmount={winAmounts.get(heroId)}
           heroHandName={heroHand && (game.board.length || heroHand.cat > 0) ? HAND_NAMES[heroHand.cat] : null}
         />
       )}
 
       <ActionDock game={game} now={now} act={act} preAction={preAction} setPreAction={setPreAction} />
-      <SidePanel game={game} heroHand={heroHand} />
+      <SidePanel game={game} heroHand={heroHand} chat={ctl.chat} />
 
+      {paused && !togglePause && <div className="pausemark">PAUZA</div>}
       {hero.out && spectating && game.phase !== 'gameOver' && <SpectatorBar place={heroPlace} onLeave={onExit} />}
       {hero.out && !spectating && game.phase !== 'gameOver' && (
         <EliminatedDialog game={game} stats={stats} onWatch={() => setSpectating(true)} onLeave={onExit} />
@@ -323,13 +354,25 @@ export function GameScreen({ settings, onExit }: { settings: Settings; onExit: (
         <GameOverDialog
           game={game}
           stats={stats}
-          onRestart={() => {
-            setSpectating(false);
-            restart();
-          }}
+          onRestart={
+            restart
+              ? () => {
+                  setSpectating(false);
+                  restart();
+                }
+              : undefined
+          }
           onLeave={onExit}
         />
       )}
-    </>
+    </HeroContext.Provider>
   );
+}
+
+function copyText(text: string) {
+  try {
+    void navigator.clipboard.writeText(text);
+  } catch {
+    /* schránka nedostupná */
+  }
 }
