@@ -12,9 +12,11 @@ interface Props {
   setPreAction: (p: PreAction) => void;
   /** Trénink: doporučený tah se zvýrazní. */
   advice?: Advice | null;
+  /** Dokup kartu (Game Changer), když je povolený. */
+  onBuyCard?: () => void;
 }
 
-export function ActionDock({ game, now, act, preAction, setPreAction, advice }: Props) {
+export function ActionDock({ game, now, act, preAction, setPreAction, advice, onBuyCard }: Props) {
   const heroId = useHeroId();
   const hero = game.players.find((p) => p.id === heroId)!;
   const legal = legalActions(game, heroId);
@@ -109,6 +111,11 @@ export function ActionDock({ game, now, act, preAction, setPreAction, advice }: 
           <b>{title}</b>
           <span>{sub}</span>
         </div>
+        {onBuyCard && (
+          <button type="button" className="tb" style={{ borderColor: 'var(--amber)' }} onClick={onBuyCard}>
+            + Dokoupit kartu · {fmt(game.betUnit)}
+          </button>
+        )}
         {myTurn && legal?.canRaise && legal.minRaiseTo === legal.maxRaiseTo ? (
           <span style={{ fontSize: 12, color: "var(--muted)" }}>{fixedNote}</span>
         ) : myTurn && legal?.canRaise ? (

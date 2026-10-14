@@ -1,6 +1,7 @@
 import { fullDeck } from '../engine/cards';
 import { bestHandFor } from '../engine/evaluator';
-import { type GameState, legalActions, potTotal } from '../engine/game';
+import { type GameState, legalActions, potTotal, visibleBoard } from '../engine/game';
+import { boardTotal } from '../engine/rules';
 import { estimateEquity } from './bot';
 
 export type Advice = 'fold' | 'check' | 'call' | 'raise';
@@ -28,29 +29,33 @@ export function computeHint(s: GameState, heroId: string, rng: () => number): Hi
   const pot = potTotal(s);
   const potOdds = legal.callAmount > 0 ? legal.callAmount / (pot + legal.callAmount) : 0;
 
-  if (rules.hideOwnPreflop && s.street === 'preflop') {
+  if ((rules.hideOwnPreflop && s.street === 'preflop') || !me.hole.length) {
     return {
       equity: null,
       potOdds,
       outs: null,
       advice: legal.canCheck ? 'check' : 'fold',
-      text: 'Hraješ naslepo – bez znalosti karet je nejlevnější check, jinak spíš fold.',
+      text: me.hole.length ? 'Hraješ naslepo – bez znalosti karet je nejlevnější check, jinak spíš fold.' : 'Zatím nemáš karty v ruce – sázka je čistý odhad.',
     };
   }
 
-  const cost = rules.omaha ? 3 : 1;
-  const iterations = Math.max(150, Math.floor(900 / Math.max(1, Math.ceil(opponents / 2)) / cost));
-  const equity = estimateEquity(me.hole, s.board, opponents, iterations, rng, rules);
+  const cards = (rules.holeSchedule ? rules.holeSchedule[rules.holeSchedule.length - 1] : rules.holeCards) + boardTotal(rules);
+  const cost = rules.omaha ? 3 : cards > 9 ? 10 : cards > 7 ? 3 : 1;
+  const iterations = Math.max(cost >= 10 ? 40 : 150, Math.floor(900 / Math.max(1, Math.ceil(opponents / 2)) / cost));
+  const board = visibleBoard(s);
+  const simOpp = cost >= 10 ? Math.min(opponents, 2) : opponents;
+  const raw = rules.splitAll ? 1 / (opponents + 1) : estimateEquity(me.hole, board, simOpp, iterations, rng, rules);
+  const equity = rules.splitAll || simOpp === opponents ? raw : Math.pow(raw, opponents / simOpp);
 
   // Outy: neviděné karty, které na další kartě zlepší kombinaci.
   let outs: number | null = null;
-  if (s.board.length >= 3 && s.board.length < rules.boardCards) {
-    const cur = bestHandFor(me.hole, s.board, rules);
-    const seen = new Set([...me.hole, ...s.board].map((c) => c.r + c.s));
+  if (board.length >= 3 && board.length < boardTotal(rules) && !rules.hiddenBoard.length) {
+    const cur = bestHandFor(me.hole, board, rules);
+    const seen = new Set([...me.hole, ...board].map((c) => c.r + c.s));
     outs = 0;
     for (const c of fullDeck()) {
       if (seen.has(c.r + c.s) || (rules.shortDeck && c.r < 6)) continue;
-      const next = bestHandFor(me.hole, [...s.board, c], rules);
+      const next = bestHandFor(me.hole, [...board, c], rules);
       if (next.cat !== cur.cat && next.strength > cur.strength) outs++;
     }
   }

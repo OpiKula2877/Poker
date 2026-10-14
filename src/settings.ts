@@ -68,8 +68,19 @@ export function settingsToConfig(raw: Settings, seats: number): GameConfig {
     levelMinutes: s.levelMinutes,
     turnSeconds: s.turnSeconds,
     variant: cash ? 'cash' : 'tournament',
-    gameChanger: s.gameChanger ? { chance: s.gcChance } : null,
+    gameChanger: s.gameChanger ? { chance: s.gcChance, events: devEvents() } : null,
   };
+}
+
+/** Jen pro vývoj: localStorage „poker.devEvents“ = "draw,reverseDeal" omezí losované karty. */
+function devEvents(): string[] | undefined {
+  if (!import.meta.env.DEV) return undefined;
+  try {
+    const v = localStorage.getItem('poker.devEvents');
+    return v ? v.split(',').map((x) => x.trim()) : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 export function cleanName(name: string, fallback = 'Hráč'): string {

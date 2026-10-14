@@ -1,7 +1,7 @@
 import { DEFAULT_RULES, type RoundRules } from './rules';
 import { shuffle } from './cards';
 
-export type Rarity = 'common' | 'rare' | 'legendary';
+export type Rarity = 'common' | 'rare' | 'legendary' | 'exotic';
 
 export interface GameEvent {
   id: string;
@@ -12,8 +12,8 @@ export interface GameEvent {
   apply?: (r: RoundRules, rng: () => number) => RoundRules;
 }
 
-export const RARITY_WEIGHT: Record<Rarity, number> = { common: 10, rare: 5, legendary: 1.5 };
-export const RARITY_NAME: Record<Rarity, string> = { common: 'běžná', rare: 'vzácná', legendary: 'legendární' };
+export const RARITY_WEIGHT: Record<Rarity, number> = { common: 10, rare: 5, legendary: 1.5, exotic: 0.6 };
+export const RARITY_NAME: Record<Rarity, string> = { common: 'běžná', rare: 'vzácná', legendary: 'legendární', exotic: 'exotická' };
 
 /** 20 Game Changer karet. Každá platí jen pro jednu ruku. */
 export const EVENTS: GameEvent[] = [
@@ -157,6 +157,152 @@ export const EVENTS: GameEvent[] = [
     name: 'Velké míchání',
     desc: 'Žetony všech hráčů ve hře se náhodně přehází mezi ně.',
     rarity: 'legendary',
+  },
+
+  // ===== druhá série =====
+  // --- běžné ---
+  {
+    id: 'hiddenBets',
+    name: 'Skryté sázky',
+    desc: 'Sázky soupeřů ani bank nejsou vidět. Co kdo vsadil, se ukáže až po ruce.',
+    rarity: 'common',
+    apply: (r) => ({ ...r, hiddenBets: true }),
+  },
+  {
+    id: 'aceLow',
+    name: 'Eso dolů',
+    desc: 'Eso je nejnižší karta (jednička). Postupka do esa neplatí, A-2-3-4-5 ano.',
+    rarity: 'common',
+    apply: (r) => ({ ...r, aceLow: true }),
+  },
+  {
+    id: 'poorDealer',
+    name: 'Špatný dealer',
+    desc: 'Dealerem je hráč s nejmenším počtem žetonů – má nejlepší pozici.',
+    rarity: 'common',
+    apply: (r) => ({ ...r, poorDealer: true }),
+  },
+  // --- vzácné ---
+  {
+    id: 'hiddenRiver',
+    name: 'Skrytá river',
+    desc: 'River leží rubem. Jakou kartu měla, se ukáže až při vyhodnocení.',
+    rarity: 'rare',
+    apply: (r) => ({ ...r, hiddenBoard: [4] }),
+  },
+  {
+    id: 'draw',
+    name: 'Draw poker',
+    desc: 'Po prvním kole sázení si každý může vyměnit až 2 karty z ruky za nové.',
+    rarity: 'rare',
+    apply: (r) => ({ ...r, draw: true }),
+  },
+  {
+    id: 'bounty',
+    name: 'Bounty',
+    desc: 'Vítěz ruky dostane navíc 1 BB od každého, kdo byl v ruce.',
+    rarity: 'rare',
+    apply: (r) => ({ ...r, bounty: true }),
+  },
+  {
+    id: 'quickFlop',
+    name: 'Rychlý flop',
+    desc: 'Flop leží na stole hned od začátku – sází se rovnou nad třemi kartami.',
+    rarity: 'rare',
+    apply: (r) => ({ ...r, boardSchedule: [3, 4, 5] }),
+  },
+  {
+    id: 'buyCard',
+    name: 'Dokup kartu',
+    desc: 'Před flopem si můžeš jednou za ruku dokoupit kartu do ruky za 1 BB.',
+    rarity: 'rare',
+    apply: (r) => ({ ...r, buyCard: true }),
+  },
+  {
+    id: 'roulette',
+    name: 'Ruleta karet',
+    desc: 'Každý dostane náhodně 1 až 4 karty – každý jiný počet.',
+    rarity: 'rare',
+    apply: (r) => ({ ...r, roulette: true }),
+  },
+  {
+    id: 'hungry',
+    name: 'Hladovka',
+    desc: 'Kdo má méně než 5 big blindů, jde hned povinně all in.',
+    rarity: 'rare',
+    apply: (r) => ({ ...r, hungry: true }),
+  },
+  {
+    id: 'splitAll',
+    name: 'Zrcadlový pot',
+    desc: 'Na kartách nezáleží: bank se rozdělí rovným dílem mezi všechny, kdo nesložili.',
+    rarity: 'rare',
+    apply: (r) => ({ ...r, splitAll: true }),
+  },
+  {
+    id: 'blindsOnly',
+    name: 'Hra pro dva',
+    desc: 'Hrají jen small a big blind. Všichni ostatní tuhle ruku automaticky složí.',
+    rarity: 'rare',
+    apply: (r) => ({ ...r, blindsOnly: true }),
+  },
+  // --- legendární ---
+  {
+    id: 'reverseDeal',
+    name: 'Obrácené rozdávání',
+    desc: 'Na začátku jsou 2 karty na stole a nikdo nemá nic v ruce. Po sázení přijdou do ruky 3 karty, pak 1 a ještě 1; stůl se dorozdá do 5.',
+    rarity: 'legendary',
+    apply: (r) => ({ ...r, boardSchedule: [2, 3, 4, 5], holeSchedule: [0, 3, 4, 5], holeCards: 5 }),
+  },
+  {
+    id: 'tenBoard',
+    name: 'Deset karet',
+    desc: 'Na stole bude 10 společných karet, rozdávají se po sázení: 3, 5, 7 a 10.',
+    rarity: 'legendary',
+    apply: (r) => ({ ...r, boardSchedule: [0, 3, 5, 7, 10], boardCards: 10 }),
+  },
+  {
+    id: 'openHands',
+    name: 'Otevřené karty',
+    desc: 'Všichni vidí karty všech. Hraje se na otevřeno – blufovat jde jen sázkou.',
+    rarity: 'legendary',
+    apply: (r) => ({ ...r, openHands: true }),
+  },
+  {
+    id: 'quake',
+    name: 'Zemětřesení',
+    desc: 'Stolem otřese zemětřesení a karty se rozsypou. Pravidla platí jako obvykle – jen to tak nevypadá.',
+    rarity: 'legendary',
+    apply: (r) => ({ ...r, quake: true }),
+  },
+  {
+    id: 'jackpot',
+    name: 'Jackpot',
+    desc: 'Jedna karta na stole je jackpot. Kdo vyhraje s kombinací, ve které je, dostane od každého hráče u stolu 1 BB.',
+    rarity: 'legendary',
+    apply: (r, rng) => ({ ...r, jackpotIndex: Math.floor(rng() * 5) }),
+  },
+  {
+    id: 'dark',
+    name: 'Tma',
+    desc: 'Zhasla světla. Nevidíš žetony ani sázky soupeřů, jen svoje karty a stůl.',
+    rarity: 'legendary',
+    apply: (r) => ({ ...r, dark: true, hiddenBets: true }),
+  },
+  // --- exotické ---
+  {
+    id: 'dejaVu',
+    name: 'Déjà vu',
+    desc: 'Při vyhodnocení se rozdá druhý, úplně nový stůl. Polovinu banku bere nejlepší ruka na prvním stole, druhou na druhém.',
+    rarity: 'exotic',
+    apply: (r) => ({ ...r, runTwice: true }),
+  },
+  {
+    id: 'blackCat',
+    name: 'Černá kočka',
+    desc: 'Jedna karta v něčí ruce je černá kočka. Kdo ji má, platí hned 2 BB do banku – a všichni ví, kdo to je.',
+    rarity: 'exotic',
+    apply: (r) => ({ ...r, catCard: '?' }),
   },
 ];
 

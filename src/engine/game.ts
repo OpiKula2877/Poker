@@ -1,8 +1,8 @@
-import { type Card, cardText, createRng, fullDeck, shuffle } from './cards';
+import { type Card, cardId, cardText, createRng, fullDeck, shuffle } from './cards';
 import { bestHandFor, describeHand, HAND_NAMES } from './evaluator';
 import { drawEvent, rulesForEvent } from './events';
 import { awardPots, computePots } from './pots';
-import { DEFAULT_RULES, type RoundRules } from './rules';
+import { DEFAULT_RULES, type RoundRules, boardScheduleOf } from './rules';
 
 export type Street = 'preflop' | 'flop' | 'turn' | 'river';
 /**
@@ -13,7 +13,7 @@ export type Street = 'preflop' | 'flop' | 'turn' | 'river';
  * handEnd   – ruka vyhodnocena (showdown), `startHand` začne další
  * gameOver  – zbyl jeden hráč (jen turnaj)
  */
-export type Phase = 'waiting' | 'reveal' | 'betting' | 'roundEnd' | 'handEnd' | 'gameOver';
+export type Phase = 'waiting' | 'reveal' | 'betting' | 'exchange' | 'roundEnd' | 'handEnd' | 'gameOver';
 
 export interface BlindLevel {
   sb: number;
@@ -125,6 +125,15 @@ export interface GameState {
   pendingAcks: string[];
   /** Fáze, do které hra přejde po potvrzení karty. */
   revealNext: Phase | null;
+  /** Kolikáté kolo sázení v ruce (0 = první). */
+  round: number;
+  /** Déjà vu: druhý stůl rozdaný při showdownu. */
+  board2: Card[];
+  /** Draw: kdo si ještě nevybral karty k výměně. */
+  pendingExchange: string[];
+  drawDone: boolean;
+  /** Kdo si v této ruce už dokoupil kartu. */
+  boughtCard: string[];
   /** Pravidla aktuální ruky (Game Changer). */
   rules: RoundRules;
   showdown: ShowdownInfo | null;
@@ -229,6 +238,27 @@ export function turnSecondsOf(s: GameState): number {
 
 export const isCash = (s: GameState) => s.config.variant === 'cash';
 
+/** Vezme kartu z balíčku (pokud nějaká zbývá). */
+function drawTo(s: GameState, into: Card[]) {
+  const c = s.deck.pop();
+  if (c) into.push(c);
+}
+
+/** Dorozdá hráčům karty do ruky tak, aby každý měl `upTo` karet. */
+function dealHole(s: GameState, players: PlayerState[], upTo: number) {
+  for (let k = 0; k < upTo; k++) for (const p of players) if (p.hole.length < upTo) drawTo(s, p.hole);
+}
+
+/** Karty na stole tak, jak je vidí hráči (skryté jako null). */
+export function visibleBoard(s: GameState): Card[] {
+  const showAll = s.phase === 'handEnd' || s.phase === 'gameOver';
+  return s.board.filter((_, i) => showAll || !s.rules.hiddenBoard.includes(i));
+}
+
+function boardText(s: GameState, reveal = false): string {
+  return s.board.map((c, i) => (!reveal && s.rules.hiddenBoard.includes(i) ? '??' : cardText(c))).join(' ');
+}
+
 function pay(p: PlayerState, amount: number): number {
   const a = Math.min(amount, p.stack);
   p.stack -= a;
@@ -286,6 +316,11 @@ export function createGame(config: GameConfig, setups: PlayerSetup[], seed: numb
     raisesThisStreet: 0,
     pendingAcks: [],
     revealNext: null,
+    round: 0,
+    board2: [],
+    pendingExchange: [],
+    drawDone: false,
+    boughtCard: [],
     rules: DEFAULT_RULES,
     showdown: null,
     winnerId: null,
@@ -324,6 +359,11 @@ export function startHand(prev: GameState, now: number, random?: () => number): 
 
   s.handNo++;
   s.board = [];
+  s.board2 = [];
+  s.round = 0;
+  s.pendingExchange = [];
+  s.drawDone = false;
+  s.boughtCard = [];
   s.showdown = null;
   s.street = 'preflop';
   for (const p of s.players) {
@@ -360,8 +400,9 @@ export function startHand(prev: GameState, now: number, random?: () => number): 
     addLog(s, 'event', 'žetony všech hráčů se přeházely');
   }
 
-  // Dealer se posouvá na dalšího hráče ve hře.
-  if (!s.dealerId || !byId(s, s.dealerId)) s.dealerId = active[Math.floor(rng() * active.length)].id;
+  // Dealer se posouvá na dalšího hráče ve hře (Špatný dealer: nejmenší stack).
+  if (s.rules.poorDealer) s.dealerId = active.reduce((a, p) => (p.stack < a.stack ? p : a)).id;
+  else if (!s.dealerId || !byId(s, s.dealerId)) s.dealerId = active[Math.floor(rng() * active.length)].id;
   else s.dealerId = orderAfter(s, s.dealerId, (p) => !p.out)[0].id;
 
   if (active.length === 2) {
@@ -378,7 +419,16 @@ export function startHand(prev: GameState, now: number, random?: () => number): 
     rng,
   );
   const dealOrder = orderAfter(s, s.dealerId, (p) => !p.out);
-  for (let round = 0; round < s.rules.holeCards; round++) for (const p of dealOrder) p.hole.push(s.deck.pop()!);
+  const r = s.rules;
+  if (r.roulette) {
+    // Ruleta karet: každý jiný počet 1–4.
+    const counts = new Map(dealOrder.map((p) => [p.id, 1 + Math.floor(rng() * 4)]));
+    for (let k = 0; k < 4; k++) for (const p of dealOrder) if (p.hole.length < counts.get(p.id)!) drawTo(s, p.hole);
+  } else {
+    dealHole(s, dealOrder, r.holeSchedule ? r.holeSchedule[0] : r.holeCards);
+  }
+  // Některé karty mění, kolik karet leží na stole hned od začátku.
+  for (let k = 0; k < boardScheduleOf(r)[0]; k++) drawTo(s, s.board);
 
   const b = currentBlinds(s);
   const sbAmt = b.sb * s.rules.blindMult;
@@ -399,7 +449,39 @@ export function startHand(prev: GameState, now: number, random?: () => number): 
   addLog(s, 'action', `small blind ${fmt(sb.bet)}`, sb.name);
   addLog(s, 'action', `big blind ${fmt(bb.bet)}`, bb.name);
 
-  s.currentBet = bbAmt;
+  // Černá kočka: náhodná karta v něčí ruce, majitel platí 2 BB do banku.
+  if (r.catCard === '?') {
+    const owners = active.filter((p) => p.hole.length);
+    const owner = owners[Math.floor(rng() * owners.length)];
+    const card = owner.hole[Math.floor(rng() * owner.hole.length)];
+    r.catCard = cardId(card);
+    const fee = Math.min(owner.stack, b.bb * 2);
+    owner.stack -= fee;
+    owner.committed += fee;
+    if (owner.stack === 0) owner.allIn = true;
+    addLog(s, 'event', `${owner.name} má černou kočku a platí ${fmt(fee)}`);
+  }
+  // Hra pro dva: hrají jen blindy.
+  if (r.blindsOnly) {
+    for (const p of active) {
+      if (p.id !== sb.id && p.id !== bb.id) {
+        p.folded = true;
+        p.lastAction = 'Mimo';
+      }
+    }
+  }
+  // Hladovka: kdo má méně než 5 BB, jde all in.
+  if (r.hungry) {
+    for (const p of active) {
+      if (!p.folded && !p.allIn && p.stack + p.committed < b.bb * 5) {
+        pay(p, p.stack);
+        p.lastAction = 'All in';
+        addLog(s, 'action', `all in ${fmt(p.bet)} (hladovka)`, p.name);
+      }
+    }
+  }
+
+  s.currentBet = Math.max(bbAmt, ...active.filter((p) => !p.folded).map((p) => p.bet));
   s.minRaise = bbAmt;
   s.betUnit = bbAmt;
   s.raisesThisStreet = 0;
@@ -550,27 +632,37 @@ export function advance(prev: GameState, now: number): GameState {
   const s = clone(prev);
   for (const p of s.players) p.bet = 0;
 
-  if (s.players.filter(live).length <= 1 || s.street === 'river' || s.board.length >= s.rules.boardCards) {
+  const schedule = boardScheduleOf(s.rules);
+  const lastRound = schedule.length - 1;
+  if (s.players.filter(live).length <= 1 || s.round >= lastRound) {
     finishHand(s);
     return s;
   }
 
-  const burnAndDeal = (n: number) => {
-    s.deck.pop();
-    for (let i = 0; i < n; i++) s.board.push(s.deck.pop()!);
-  };
-  if (s.street === 'preflop') {
-    s.street = 'flop';
-    burnAndDeal(3);
-  } else if (s.street === 'flop') {
-    s.street = 'turn';
-    burnAndDeal(1);
-  } else {
-    s.street = 'river';
-    burnAndDeal(Math.max(1, s.rules.boardCards - 4));
+  // Draw: po prvním kole sázení si každý může vyměnit karty.
+  if (s.rules.draw && !s.drawDone && s.round === 0) {
+    s.drawDone = true;
+    s.pendingExchange = s.players.filter(live).map((p) => p.id);
+    s.phase = 'exchange';
+    s.toActId = null;
+    s.turnStartedAt = now;
+    addLog(s, 'street', 'Výměna karet');
+    return s;
   }
-  const names = { flop: 'Flop', turn: 'Turn', river: 'River' } as const;
-  addLog(s, 'street', `${names[s.street as 'flop']}: ${s.board.map(cardText).join(' ')}`);
+
+  s.round++;
+  const add = schedule[s.round] - s.board.length;
+  // Při postupném rozdávání do ruky je balíček těsný – karty se nepálí.
+  if (add > 0 && !s.rules.holeSchedule) s.deck.pop();
+  for (let i = 0; i < add; i++) drawTo(s, s.board);
+  if (s.rules.holeSchedule) {
+    const upTo = s.rules.holeSchedule[Math.min(s.round, s.rules.holeSchedule.length - 1)];
+    dealHole(s, orderAfter(s, s.dealerId, live), upTo);
+  }
+  s.street = s.round >= lastRound ? 'river' : s.round === 1 ? 'flop' : 'turn';
+  const label =
+    s.round >= lastRound ? 'River' : s.board.length === 3 ? 'Flop' : s.board.length === 4 ? 'Turn' : `Kolo ${s.round + 1}`;
+  addLog(s, 'street', `${label}: ${boardText(s)}` + (s.rules.holeSchedule ? ' · karty do ruky' : ''));
 
   for (const p of s.players) if (canAct(p) && p.lastAction !== 'All in') p.lastAction = null;
   s.currentBet = 0;
@@ -611,6 +703,9 @@ function finishHand(s: GameState) {
       hands[p.id] = { cat: h.cat, name: describeHand(h), cards: h.cards, counted: h.counted };
       p.showCards = true;
     }
+    if (s.rules.hiddenBoard.length) addLog(s, 'street', `Odkryto: ${boardText(s, true)}`);
+    // Zrcadlový pot: všichni, kdo nesložili, mají stejnou „sílu“ → bank se dělí.
+    if (s.rules.splitAll) for (const p of livePlayers) scores.set(p.id, 1);
   }
 
   // Bank, o který nikdo jiný nehraje, je nedorovnaná sázka – vrací se, nepočítá se jako výhra.
@@ -628,7 +723,21 @@ function finishHand(s: GameState) {
     addLog(s, 'action', `dostává zpět ${fmt(r.amount)}`, p.name);
   }
 
-  const { won } = awardPots(contested, scores, order);
+  let won: Map<string, number>;
+  if (s.rules.runTwice && !uncontested && !s.rules.splitAll) {
+    // Déjà vu: druhý stůl z nových karet, každý bank se dělí napůl.
+    const total = s.board.length;
+    for (let i = 0; i < total; i++) drawTo(s, s.board2);
+    const scores2 = new Map<string, number>();
+    for (const p of livePlayers) scores2.set(p.id, bestHandFor(p.hole, s.board2, s.rules).strength);
+    addLog(s, 'street', `Druhý stůl: ${s.board2.map(cardText).join(' ')}`);
+    const half1 = contested.map((p) => ({ ...p, amount: Math.ceil(p.amount / 2) }));
+    const half2 = contested.map((p) => ({ ...p, amount: Math.floor(p.amount / 2) }));
+    won = awardPots(half1, scores, order).won;
+    for (const [id, a] of awardPots(half2, scores2, order).won) won.set(id, (won.get(id) ?? 0) + a);
+  } else {
+    won = awardPots(contested, scores, order).won;
+  }
   const winners: { id: string; amount: number }[] = [];
   for (const [id, amount] of won) {
     byId(s, id)!.stack += amount;
@@ -640,6 +749,33 @@ function finishHand(s: GameState) {
     const h = hands[w.id];
     addLog(s, 'win', `bere ${fmt(w.amount)}` + (h ? ` · ${HAND_NAMES[h.cat]}` : ''), p.name);
     p.lastAction = 'Vyhrává';
+  }
+
+  // Odměny se platí z ostatních stacků – žetony se jen přesouvají.
+  const top = winners[0] ? byId(s, winners[0].id)! : null;
+  const collect = (payers: PlayerState[], each: number, why: string) => {
+    if (!top) return;
+    let sum = 0;
+    for (const p of payers) {
+      if (p.id === top.id) continue;
+      const x = Math.min(p.stack, each);
+      p.stack -= x;
+      sum += x;
+    }
+    top.stack += sum;
+    if (sum) addLog(s, 'event', `${why}: +${fmt(sum)}`, top.name);
+  };
+  if (top && s.rules.bounty) collect(inHand, s.betUnit, 'bounty');
+  if (top && s.rules.jackpotIndex !== null && !uncontested) {
+    const jack = s.board[s.rules.jackpotIndex];
+    const h = hands[top.id];
+    if (jack && h && h.cards.slice(0, h.counted).some((c) => cardId(c) === cardId(jack))) {
+      collect(
+        s.players.filter((p) => !p.out),
+        s.betUnit,
+        'jackpot',
+      );
+    }
   }
 
   const busted = s.players.filter((p) => !p.out && p.stack === 0).sort((a, b) => b.committed - a.committed);
@@ -696,6 +832,52 @@ export function ackEvent(prev: GameState, id: string, now: number): GameState {
     s.revealNext = null;
     s.turnStartedAt = now;
   }
+  return s;
+}
+
+/** Draw: hráč vymění vybrané karty (nejvýš 2) za nové z balíčku; prázdný výběr = nechá si vše. */
+export function exchangeCards(prev: GameState, id: string, indexes: number[], now: number): GameState {
+  if (prev.phase !== 'exchange' || !prev.pendingExchange.includes(id)) return prev;
+  const s = clone(prev);
+  const p = byId(s, id)!;
+  const pick = [...new Set(indexes)].filter((i) => Number.isInteger(i) && i >= 0 && i < p.hole.length).slice(0, 2);
+  for (const i of pick) {
+    const c = s.deck.pop();
+    if (c) p.hole[i] = c;
+  }
+  addLog(s, 'action', pick.length ? `mění ${pick.length} ${pick.length === 1 ? 'kartu' : 'karty'}` : 'nemění', p.name);
+  s.pendingExchange = s.pendingExchange.filter((x) => x !== id);
+  if (!s.pendingExchange.length) {
+    s.phase = 'roundEnd';
+    s.turnStartedAt = now;
+  }
+  return s;
+}
+
+/** Dokup kartu: smí hráč na tahu před flopem koupit kartu za 1 BB? */
+export function canBuyCard(s: GameState, id: string): boolean {
+  const p = byId(s, id);
+  return (
+    !!p &&
+    s.rules.buyCard &&
+    s.phase === 'betting' &&
+    s.toActId === id &&
+    s.round === 0 &&
+    !s.boughtCard.includes(id) &&
+    p.stack > s.betUnit &&
+    s.deck.length > 0
+  );
+}
+
+export function buyCard(prev: GameState, id: string): GameState {
+  if (!canBuyCard(prev, id)) return prev;
+  const s = clone(prev);
+  const p = byId(s, id)!;
+  p.stack -= s.betUnit;
+  p.committed += s.betUnit; // jde rovnou do banku, nemění sázku v kole
+  drawTo(s, p.hole);
+  s.boughtCard.push(id);
+  addLog(s, 'action', `dokupuje kartu za ${fmt(s.betUnit)}`, p.name);
   return s;
 }
 

@@ -1,7 +1,7 @@
 import { type Card, fullDeck } from '../engine/cards';
 import { bestHandFor } from '../engine/evaluator';
-import { type Action, type GameState, legalActions, potTotal } from '../engine/game';
-import { DEFAULT_RULES, type RoundRules } from '../engine/rules';
+import { type Action, type GameState, legalActions, potTotal, visibleBoard } from '../engine/game';
+import { DEFAULT_RULES, type RoundRules, boardTotal } from '../engine/rules';
 
 export const BOT_LEVEL_NAMES = ['Lehký', 'Střední', 'Těžký'];
 
@@ -17,9 +17,12 @@ export function estimateEquity(
   if (opponents <= 0) return 1;
   const known = new Set([...hole, ...board].map((c) => c.r * 4 + 'shdc'.indexOf(c.s)));
   const rest = fullDeck().filter((c) => !known.has(c.r * 4 + 'shdc'.indexOf(c.s)) && (!rules.shortDeck || c.r >= 6));
-  const boardSize = rules.boardCards;
-  const holeSize = rules.holeCards;
-  const need = Math.min(rest.length, Math.max(0, boardSize - board.length) + opponents * holeSize);
+  const boardSize = boardTotal(rules);
+  // Karty, které do ruky teprve přijdou (Obrácené rozdávání), se simulují taky.
+  const finalHole = rules.holeSchedule ? rules.holeSchedule[rules.holeSchedule.length - 1] : Math.max(hole.length, 1);
+  const myMissing = Math.max(0, finalHole - hole.length);
+  const holeSize = rules.holeSchedule ? finalHole : rules.roulette ? 2 : rules.holeCards;
+  const need = Math.min(rest.length, Math.max(0, boardSize - board.length) + myMissing + opponents * holeSize);
   let total = 0;
   for (let it = 0; it < iterations; it++) {
     // částečné zamíchání: stačí prvních `need` karet
@@ -32,7 +35,9 @@ export function estimateEquity(
     let k = 0;
     const fullBoard = board.slice();
     while (fullBoard.length < boardSize) fullBoard.push(rest[k++]);
-    const mine = bestHandFor(hole, fullBoard, rules).strength;
+    const myHole = myMissing ? [...hole, ...rest.slice(k, k + myMissing)] : hole;
+    k += myMissing;
+    const mine = bestHandFor(myHole, fullBoard, rules).strength;
     let best = true;
     let ties = 0;
     for (let o = 0; o < opponents; o++) {
@@ -68,13 +73,19 @@ export function decideBotAction(s: GameState, id: string, rng: () => number): Ac
   const rules = s.rules;
   const iterBase = [120, 250, 450][level] ?? 250;
   // Víc karet = dražší vyhodnocení → méně simulací.
-  const cost = rules.omaha ? 3 : rules.holeCards > 2 || rules.boardCards > 5 ? 2 : 1;
-  const iterations = Math.max(40, Math.floor(iterBase / Math.max(1, Math.ceil(opponents / 2)) / cost));
+  const cards = (rules.holeSchedule ? rules.holeSchedule[rules.holeSchedule.length - 1] : rules.holeCards) + boardTotal(rules);
+  const cost = rules.omaha ? 3 : cards > 9 ? 10 : cards > 7 ? 3 : 1;
+  const iterations = Math.max(cost >= 10 ? 16 : 40, Math.floor(iterBase / Math.max(1, Math.ceil(opponents / 2)) / cost));
 
   const fair = 1 / (opponents + 1);
   // Naslepo: bot svoje karty před flopem nezná.
   const blindNow = rules.hideOwnPreflop && s.street === 'preflop';
-  let eq = blindNow ? fair : estimateEquity(me.hole, s.board, opponents, iterations, rng, rules);
+  // Zrcadlový pot: na kartách nezáleží.
+  // U drahých karet (hodně karet na stole/v ruce) se simulují nejvýš 2 soupeři
+  // a šance se přepočítá: proti N soupeřům ≈ (šance proti 2)^(N/2).
+  const simOpp = cost >= 10 ? Math.min(opponents, 2) : opponents;
+  const raw = rules.splitAll || blindNow ? fair : estimateEquity(me.hole, visibleBoard(s), simOpp, iterations, rng, rules);
+  let eq = rules.splitAll || blindNow || simOpp === opponents ? raw : Math.pow(raw, opponents / simOpp);
   const noise = [0.12, 0.05, 0.02][level] ?? 0.05;
   eq = Math.min(1, Math.max(0, eq + (rng() * 2 - 1) * noise));
 
@@ -122,4 +133,18 @@ export function decideBotAction(s: GameState, id: string, rng: () => number): Ac
   }
   if (bluff && legal.canRaise) return raiseTo(0.6);
   return { type: 'fold' };
+}
+
+/** Draw: které karty bot vymění – nejnižší karty bez páru (nejvýš 2). */
+export function botExchange(s: GameState, id: string): number[] {
+  const me = s.players.find((p) => p.id === id);
+  if (!me) return [];
+  const seen = [...me.hole, ...s.board];
+  const count = (r: number) => seen.filter((c) => c.r === r).length;
+  return me.hole
+    .map((c, i) => ({ c, i }))
+    .filter(({ c }) => count(c.r) === 1 && c.r < 11)
+    .sort((a, b) => a.c.r - b.c.r)
+    .slice(0, 2)
+    .map((x) => x.i);
 }

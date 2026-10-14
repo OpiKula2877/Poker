@@ -29,6 +29,10 @@ export interface GameController {
   ack: () => void;
   /** Profilové obrázky podle id hráče. */
   avatars: Record<string, string>;
+  /** Draw: vyměnit karty s těmito indexy. */
+  exchange: (idx: number[]) => void;
+  /** Dokup kartu za 1 BB. */
+  buyCard: () => void;
 }
 
 function avatarMap(players: RoomPlayer[]): Record<string, string> {
@@ -65,6 +69,8 @@ export function useLocalController(settings: Settings): GameController {
     hints: settings.hints,
     rebuy: () => engine.rebuyFor(HERO_ID),
     ack: () => engine.ackFor(HERO_ID),
+    exchange: (idx) => engine.exchangeFor(HERO_ID, idx),
+    buyCard: () => engine.buyCardFor(HERO_ID),
     avatars: settings.avatar ? { [HERO_ID]: settings.avatar } : {},
   };
 }
@@ -87,17 +93,21 @@ export function useHostController(room: HostRoom, settings: Settings): GameContr
     awayKey: [...away].sort().join(),
     onState: (g, paused) => room.broadcastState(g, paused),
   });
-  const { actFor, rebuyFor, ackFor } = engine;
+  const { actFor, rebuyFor, ackFor, exchangeFor, buyCardFor } = engine;
   useEffect(() => {
     room.onAction = actFor;
     room.onRebuy = rebuyFor;
     room.onAck = ackFor;
+    room.onDiscard = exchangeFor;
+    room.onBuyCard = buyCardFor;
     return () => {
       room.onAction = undefined;
       room.onRebuy = undefined;
       room.onAck = undefined;
+      room.onDiscard = undefined;
+      room.onBuyCard = undefined;
     };
-  }, [room, actFor, rebuyFor, ackFor]);
+  }, [room, actFor, rebuyFor, ackFor, exchangeFor, buyCardFor]);
   const stats = useHeroStats(engine.game, HOST_PLAYER_ID);
   return {
     game: engine.game,
@@ -114,6 +124,8 @@ export function useHostController(room: HostRoom, settings: Settings): GameContr
     online: { code: room.code, role: 'host' },
     rebuy: () => rebuyFor(HOST_PLAYER_ID),
     ack: () => ackFor(HOST_PLAYER_ID),
+    exchange: (idx) => exchangeFor(HOST_PLAYER_ID, idx),
+    buyCard: () => buyCardFor(HOST_PLAYER_ID),
     avatars: avatarMap(room.roomInfo().players),
   };
 }
@@ -154,6 +166,8 @@ export function useClientController(room: ClientRoom): GameController {
     online: { code: room.code, role: 'guest' },
     rebuy: () => room.sendRebuy(),
     ack: () => room.sendAck(),
+    exchange: (idx) => room.sendDiscard(idx),
+    buyCard: () => room.sendBuyCard(),
     avatars: avatarMap(room.room?.players ?? []),
   };
 }

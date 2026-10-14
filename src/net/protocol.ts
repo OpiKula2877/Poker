@@ -1,4 +1,4 @@
-import type { Card } from '../engine/cards';
+import { type Card, cardId } from '../engine/cards';
 import type { Action, GameState } from '../engine/game';
 import type { Settings } from '../settings';
 
@@ -55,7 +55,9 @@ export type ClientMsg =
   | { t: 'leave' }
   | { t: 'ping' }
   | { t: 'rebuy' }
-  | { t: 'ack' };
+  | { t: 'ack' }
+  | { t: 'discard'; idx: number[] }
+  | { t: 'buycard' };
 
 /** Jak často si strany posílají ping a po jaké době ticha se spojení bere jako ztracené. */
 export const PING_MS = 3000;
@@ -77,14 +79,21 @@ const HIDDEN: Card = { r: 0, s: 's' };
  * a seed (z něj by šel balíček dopočítat) se nahradí prázdnými hodnotami.
  */
 export function viewFor(s: GameState, playerId: string): GameState {
+  const done = s.phase === 'handEnd' || s.phase === 'gameOver';
   // Naslepo: před flopem nevidí své karty ani hráč sám.
-  const blindNow = s.rules.hideOwnPreflop && s.street === 'preflop' && s.phase !== 'handEnd';
+  const blindNow = s.rules.hideOwnPreflop && s.street === 'preflop' && !done;
+  const me = s.players.find((p) => p.id === playerId);
+  // Černá kočka: kterou kartu má, ví jen majitel.
+  const ownsCat = !!s.rules.catCard && !!me?.hole.some((c) => cardId(c) === s.rules.catCard);
   return {
     ...s,
     seed: 0,
     deck: s.deck.map(() => HIDDEN),
+    // Skrytá river: karta leží rubem až do vyhodnocení.
+    board: done ? s.board : s.board.map((c, i) => (s.rules.hiddenBoard.includes(i) ? HIDDEN : c)),
+    rules: ownsCat || done ? s.rules : { ...s.rules, catCard: s.rules.catCard ? '?' : null },
     players: s.players.map((p) => {
-      if (p.showCards || (p.id === playerId && !blindNow)) return p;
+      if (p.showCards || s.rules.openHands || (p.id === playerId && !blindNow)) return p;
       // Odhalená karta: první karta každého je vidět všem.
       return { ...p, hole: p.hole.map((c, i) => (s.rules.revealFirst && i === 0 && p.inHand ? c : HIDDEN)) };
     }),
@@ -118,6 +127,11 @@ export function parseClientMsg(raw: unknown): ClientMsg | null {
       return { t: 'rebuy' };
     case 'ack':
       return { t: 'ack' };
+    case 'buycard':
+      return { t: 'buycard' };
+    case 'discard':
+      if (!Array.isArray(m.idx)) return null;
+      return { t: 'discard', idx: m.idx.filter((i): i is number => Number.isInteger(i)).slice(0, 2) };
     default:
       return null;
   }

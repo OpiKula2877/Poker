@@ -51,6 +51,10 @@ export class HostRoom {
   onRebuy?: (playerId: string) => void;
   /** Hráč potvrdil Game Changer kartu. */
   onAck?: (playerId: string) => void;
+  /** Draw: hráč vybral karty k výměně. */
+  onDiscard?: (playerId: string, idx: number[]) => void;
+  /** Dokup kartu. */
+  onBuyCard?: (playerId: string) => void;
 
   private settings: Settings;
   private peer: Peer | null = null;
@@ -171,6 +175,8 @@ export class HostRoom {
     else if (msg.t === 'leave') this.handleClose(conn);
     else if (msg.t === 'rebuy') this.onRebuy?.(guest.id);
     else if (msg.t === 'ack') this.onAck?.(guest.id);
+    else if (msg.t === 'discard') this.onDiscard?.(guest.id, msg.idx);
+    else if (msg.t === 'buycard') this.onBuyCard?.(guest.id);
   }
 
   /** Kdo se dlouho neozval, je odpojený (zavřená karta se přes WebRTC nemusí ohlásit hned). */

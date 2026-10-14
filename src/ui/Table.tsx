@@ -4,7 +4,9 @@ import { computeHint } from '../bots/hints';
 import { HAND_NAMES, bestHandFor } from '../engine/evaluator';
 import { GameChangerLayer } from './GameChanger';
 import { HintPanel } from './HintPanel';
-import { type GameState, type PlayerState, currentBlinds, isCash, potTotal, turnSecondsOf } from '../engine/game';
+import { type GameState, type PlayerState, canBuyCard, currentBlinds, isCash, potTotal, turnSecondsOf, visibleBoard } from '../engine/game';
+import { boardTotal } from '../engine/rules';
+import { ExchangeBar } from './ExchangeBar';
 import { ActionDock } from './ActionDock';
 import { EliminatedDialog, GameOverDialog, RebuyDialog, SpectatorBar } from './Overlays';
 import { SidePanel } from './SidePanel';
@@ -66,7 +68,9 @@ function Seat({ p, x, y, game, hits, winAmount, away, avatar }: SeatProps) {
     );
   }
   const active = game.toActId === p.id && game.phase === 'betting';
-  const showOpen = p.showCards && p.hole.length > 0;
+  // Otevřené karty (Game Changer) – všichni vidí všechno.
+  const showOpen = (p.showCards || game.rules.openHands) && p.hole.length > 0 && p.hole[0].r > 0;
+  const dark = game.rules.dark && game.phase !== 'handEnd';
   // Odhalená karta (Game Changer): karty se položí vedle sebe, aby byla vidět celá.
   const anyFace = showOpen || (game.rules.revealFirst && p.hole[0]?.r > 0);
   const label = winAmount ? '+' + fmt(winAmount) : p.lastAction;
@@ -93,7 +97,7 @@ function Seat({ p, x, y, game, hits, winAmount, away, avatar }: SeatProps) {
             {away && <span className="tag away">PRYČ</span>}
             {pos && <span className="tag">{pos}</span>}
           </div>
-          <div className="ps">{fmt(p.stack)}</div>
+          <div className="ps">{dark ? '???' : fmt(p.stack)}</div>
         </div>
         {game.dealerId === p.id && (
           <div className="dbtn" title="Dealer">
@@ -113,7 +117,7 @@ function Seat({ p, x, y, game, hits, winAmount, away, avatar }: SeatProps) {
         )}
       </div>
       <div className="srow">
-        <ChipStack amount={p.stack} />
+        {!dark && <ChipStack amount={p.stack} />}
         {label && <span className={'status ' + statusClass(label)}>{label}</span>}
       </div>
     </div>
@@ -127,6 +131,8 @@ function HeroSeat({
   heroHandName,
   winAmount,
   avatar,
+  picked,
+  onPick,
 }: {
   p: PlayerState;
   game: GameState;
@@ -134,6 +140,9 @@ function HeroSeat({
   heroHandName: string | null;
   winAmount?: number;
   avatar?: string;
+  /** Draw: vybrané karty k výměně. */
+  picked: number[];
+  onPick?: (i: number) => void;
 }) {
   const active = game.toActId === p.id && game.phase === 'betting';
   const label = winAmount ? '+' + fmt(winAmount) : p.lastAction;
@@ -150,9 +159,19 @@ function HeroSeat({
             hidden || c.r === 0 ? (
               <CardBack key={'b' + i + game.handNo} size="lg" style={fan(i)} />
             ) : (
-              <CardFace key={cardId(c) + game.handNo} card={c} size="lg" hit={hits.has(cardId(c))} dim={p.folded} className="deal" style={fan(i)} />
+              <CardFace
+                key={cardId(c) + game.handNo}
+                card={c}
+                size="lg"
+                hit={hits.has(cardId(c))}
+                dim={p.folded}
+                className={'deal' + (onPick ? ' pickable' : '') + (picked.includes(i) ? ' picked' : '') + (game.rules.catCard === cardId(c) ? ' cat' : '')}
+                style={fan(i)}
+                onClick={onPick ? () => onPick(i) : undefined}
+              />
             ),
           )}
+        {p.inHand && !hidden && p.hole.length === 0 && <span className="handtag">Karty přijdou po sázení</span>}
         {hidden && p.inHand && <span className="handtag">Naslepo</span>}
         {heroHandName && !p.folded && !hidden && <span className="handtag">{heroHandName}</span>}
       </div>
@@ -186,27 +205,60 @@ function HeroSeat({
 }
 
 function Board({ game, hits, fadeOthers }: { game: GameState; hits: Set<string>; fadeOthers: boolean }) {
-  const labels = ['FLOP', 'FLOP', 'FLOP', 'TURN', 'RIVER', 'RIVER 2'].slice(0, game.rules.boardCards);
-  const width = labels.length * 64 + (labels.length - 1) * 10;
+  const r = game.rules;
+  const total = boardTotal(r);
+  const done = game.phase === 'handEnd' || game.phase === 'gameOver';
+  const gap = total > 6 ? 6 : 10;
+  const width = total * 64 + (total - 1) * gap;
+  const label = (i: number) => (i < 3 ? 'FLOP' : i === 3 ? 'TURN' : i === 4 ? 'RIVER' : i + 1 + '.');
+  // Zemětřesení: karty se rozsypou (stabilně podle čísla ruky).
+  const shake = (i: number) => {
+    if (!r.quake) return {};
+    const k = Math.sin((game.handNo + 1) * 9.7 + i * 3.1);
+    const dx = Math.round(k * 14);
+    const dy = Math.round(Math.cos(i * 2.3 + game.handNo) * 18);
+    return { transform: `translate(${dx}px, ${dy}px) rotate(${Math.round(k * 16)}deg)` };
+  };
   return (
-    <div className="board" style={{ left: 540 - width / 2 }}>
-      {labels.map((label, i) => {
-        const c: Card | undefined = game.board[i];
-        if (!c) return <div key={'slot' + i} className="slot">{label}</div>;
-        const id = cardId(c);
-        return (
-          <CardFace
-            key={id + game.handNo}
-            card={c}
-            size="md"
-            hit={hits.has(id)}
-            dim={fadeOthers && !hits.has(id)}
-            className="deal"
-            style={{ animationDelay: (i < 3 ? i * 0.1 : 0) + 's' }}
-          />
-        );
-      })}
-    </div>
+    <>
+      <div className={'board' + (r.quake ? ' quaked' : '')} style={{ left: 540 - width / 2, gap }}>
+        {Array.from({ length: total }, (_, i) => {
+          const c: Card | undefined = game.board[i];
+          if (!c) return <div key={'slot' + i} className="slot" style={shake(i)}>{label(i)}</div>;
+          const jackpot = r.jackpotIndex === i;
+          if (c.r === 0 || (!done && r.hiddenBoard.includes(i))) {
+            return (
+              <div key={'h' + i + game.handNo} className="bslot" style={shake(i)}>
+                <CardBack size="md" className="deal" />
+                <span className="blabel">SKRYTÁ</span>
+              </div>
+            );
+          }
+          const id = cardId(c);
+          return (
+            <div key={id + game.handNo} className="bslot" style={shake(i)}>
+              <CardFace
+                card={c}
+                size="md"
+                hit={hits.has(id)}
+                dim={fadeOthers && !hits.has(id)}
+                className={'deal' + (jackpot ? ' jackpot' : '')}
+                style={{ animationDelay: (i < 3 ? i * 0.1 : 0) + 's' }}
+              />
+              {jackpot && <span className="blabel gold">JACKPOT</span>}
+            </div>
+          );
+        })}
+      </div>
+      {game.board2.length > 0 && (
+        <div className="board board2" style={{ left: 540 - width / 2, gap }}>
+          <span className="b2label">DRUHÝ STŮL</span>
+          {game.board2.map((c, i) => (
+            <CardFace key={cardId(c) + 'b2'} card={c} size="md" className="deal" style={{ animationDelay: i * 0.08 + 's' }} />
+          ))}
+        </div>
+      )}
+    </>
   );
 }
 
@@ -242,14 +294,27 @@ export function GameScreen({ ctl, onExit }: { ctl: GameController & { game: Game
   const winAmounts = new Map(sd?.winners.map((w) => [w.id, w.amount]) ?? []);
 
   const heroHidden = game.rules.hideOwnPreflop && game.street === 'preflop' && game.phase !== 'handEnd';
+  // Karty na stole, které hráč opravdu vidí (bez skryté river).
+  const shownBoard = useMemo(() => visibleBoard(game).filter((c) => c.r > 0), [game]);
   const heroHand = useMemo(
     () =>
       hero.inHand && !hero.folded && hero.hole.length && !heroHidden && hero.hole[0].r > 0
-        ? bestHandFor(hero.hole, game.board, game.rules)
+        ? bestHandFor(hero.hole, shownBoard, game.rules)
         : null,
-    [hero.inHand, hero.folded, hero.hole, game.board, game.rules, heroHidden],
+    [hero.inHand, hero.folded, hero.hole, shownBoard, game.rules, heroHidden],
   );
+  // Draw: výběr karet k výměně.
+  const picking = game.phase === 'exchange' && game.pendingExchange.includes(heroId);
+  const [picked, setPicked] = useState<number[]>([]);
+  const pickKey = game.handNo + ':' + game.phase;
+  const [lastPickKey, setLastPickKey] = useState(pickKey);
+  if (lastPickKey !== pickKey) {
+    setLastPickKey(pickKey);
+    setPicked([]);
+  }
+  const togglePick = (i: number) => setPicked((x) => (x.includes(i) ? x.filter((y) => y !== i) : x.length >= 2 ? x : [...x, i]));
   const cash = isCash(game);
+  const betsHidden = game.rules.hiddenBets && game.phase !== 'handEnd' && game.phase !== 'gameOver';
 
   // Trénink: nápověda se počítá jednou za tah.
   const myTurn = game.phase === 'betting' && game.toActId === heroId;
@@ -365,7 +430,10 @@ export function GameScreen({ ctl, onExit }: { ctl: GameController & { game: Game
         </div>
       </header>
 
-      <div className="tablearea" style={{ transform: sideOpen ? 'none' : 'translateX(180px)' }}>
+      <div
+        className={'tablearea' + (game.rules.dark && game.phase !== 'handEnd' ? ' dark' : '') + (game.rules.quake ? ' quake' : '')}
+        style={{ transform: sideOpen ? 'none' : 'translateX(180px)' }}
+      >
       <div className="rail">
         <div className="felt">
           <div className="feltmark" aria-hidden="true">
@@ -385,11 +453,11 @@ export function GameScreen({ ctl, onExit }: { ctl: GameController & { game: Game
 
       {pot > 0 && game.phase !== 'handEnd' && game.phase !== 'gameOver' && (
         <div className="pot">
-          <ChipStack amount={pot - bets} />
+          {!betsHidden && <ChipStack amount={pot - bets} />}
           <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
             <span className="lbl">BANK</span>
-            <span className="amt">{fmt(pot - bets > 0 ? pot - bets : pot)}</span>
-            {bets > 0 && pot - bets > 0 && <span className="sub">se sázkami {fmt(pot)}</span>}
+            <span className="amt">{betsHidden ? '?' : fmt(pot - bets > 0 ? pot - bets : pot)}</span>
+            {!betsHidden && bets > 0 && pot - bets > 0 && <span className="sub">se sázkami {fmt(pot)}</span>}
           </div>
         </div>
       )}
@@ -409,8 +477,8 @@ export function GameScreen({ ctl, onExit }: { ctl: GameController & { game: Game
         const by = rel === 0 ? 488 : CY + (pt.y - CY) * 0.66;
         return (
           <div key={p.id + '-bet-' + game.street} className="bet" style={{ left: bx, top: by }}>
-            <ChipStack amount={p.bet} />
-            <span className="betamt">{fmt(p.bet)}</span>
+            {!(betsHidden && p.id !== heroId) && <ChipStack amount={p.bet} />}
+            <span className="betamt">{betsHidden && p.id !== heroId ? '?' : fmt(p.bet)}</span>
           </div>
         );
       })}
@@ -429,12 +497,31 @@ export function GameScreen({ ctl, onExit }: { ctl: GameController & { game: Game
           hits={hits}
           winAmount={winAmounts.get(heroId)}
           avatar={ctl.avatars[heroId]}
-          heroHandName={heroHand && (game.board.length || heroHand.cat > 0) ? HAND_NAMES[heroHand.cat] : null}
+          heroHandName={heroHand && (shownBoard.length || heroHand.cat > 0) ? HAND_NAMES[heroHand.cat] : null}
+          picked={picked}
+          onPick={picking ? togglePick : undefined}
         />
       )}
 
       <GameChangerLayer game={game} onAck={ctl.ack} />
-      <ActionDock game={game} now={now} act={act} preAction={preAction} setPreAction={setPreAction} advice={hint?.advice ?? null} />
+      {picking ? (
+        <ExchangeBar
+          picked={picked.length}
+          seconds={Math.max(0, Math.ceil((turnSecondsOf(game) * 1000 - (now - game.turnStartedAt)) / 1000))}
+          onExchange={() => ctl.exchange(picked)}
+          onKeep={() => ctl.exchange([])}
+        />
+      ) : (
+        <ActionDock
+          game={game}
+          now={now}
+          act={act}
+          preAction={preAction}
+          setPreAction={setPreAction}
+          advice={hint?.advice ?? null}
+          onBuyCard={canBuyCard(game, heroId) ? ctl.buyCard : undefined}
+        />
+      )}
       </div>
       {sideOpen && <SidePanel game={game} heroHand={heroHand} chat={ctl.chat} top={ctl.hints && hint ? <HintPanel hint={hint} /> : null} />}
 

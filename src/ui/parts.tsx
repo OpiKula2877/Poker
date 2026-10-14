@@ -60,6 +60,7 @@ export function CardFace({
   dim,
   className = '',
   style,
+  onClick,
 }: {
   card: CardT;
   size: CardSize;
@@ -67,11 +68,25 @@ export function CardFace({
   dim?: boolean;
   className?: string;
   style?: React.CSSProperties;
+  onClick?: () => void;
 }) {
   const sym = SUIT_SYMBOL[card.s];
   const cls = ['card', size, isRed(card) ? 'red' : '', hit ? 'hit' : '', dim ? 'faded' : '', className].filter(Boolean).join(' ');
+  const click = onClick
+    ? {
+        role: 'button',
+        tabIndex: 0,
+        onClick,
+        onKeyDown: (e: React.KeyboardEvent) => {
+          if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault();
+            onClick();
+          }
+        },
+      }
+    : {};
   return (
-    <div className={cls} style={style} aria-label={rankLabel(card.r) + ' ' + sym}>
+    <div className={cls} style={style} aria-label={rankLabel(card.r) + ' ' + sym} {...click}>
       <span className="ix">
         <b>{rankLabel(card.r)}</b>
         <i>{sym}</i>

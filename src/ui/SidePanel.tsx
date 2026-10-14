@@ -26,7 +26,7 @@ const EXAMPLES: [string, number, string][] = [
 function rulesNote(r: RoundRules): string | null {
   const ev = eventById(r.eventId);
   if (!ev) return null;
-  if (r.catRank || r.lowball || r.ignoreSuits || r.omaha || r.holeCards !== 2 || r.boardCards !== 5) return `${ev.name}: ${ev.desc}`;
+  if (r.catRank || r.lowball || r.ignoreSuits || r.omaha || r.holeCards !== 2 || r.boardCards !== 5 || r.aceLow || r.splitAll || r.holeSchedule || r.boardSchedule || r.roulette || r.runTwice || r.hiddenBoard.length) return `${ev.name}: ${ev.desc}`;
   return null;
 }
 

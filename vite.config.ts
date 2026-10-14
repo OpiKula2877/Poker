@@ -33,5 +33,7 @@ export default defineConfig({
   ],
   test: {
     include: ['src/**/*.test.ts'],
+    // Simulace turnajů běží dlouho synchronně; v samostatných procesech neblokují komunikaci workeru.
+    pool: 'forks',
   },
 });

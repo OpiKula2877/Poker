@@ -47,7 +47,11 @@ export interface EvalRules {
   lowball?: boolean;
   ignoreSuits?: boolean;
   omaha?: boolean;
+  /** Eso má hodnotu 1 (nejnižší karta). */
+  aceLow?: boolean;
 }
+
+const lowAce = (cards: Card[]) => cards.map((c) => (c.r === 14 ? { r: 1, s: c.s } : c));
 
 const CAT_UNIT = 15 ** 5;
 
@@ -163,6 +167,8 @@ export function bestHand(cards: Card[], r?: EvalRules): HandValue {
 
 /** Nejlepší ruka hráče: karty v ruce + na stole (Omaha = přesně 2 z ruky a 3 ze stolu). */
 export function bestHandFor(hole: Card[], board: Card[], r?: EvalRules): HandValue {
+  if (r?.aceLow) return bestHandFor(lowAce(hole), lowAce(board), { ...r, aceLow: false });
+  if (!hole.length && !board.length) return { cat: 0, ranks: [], cards: [], counted: 0, score: -1, strength: -1 };
   if (!r?.omaha || board.length < 3 || hole.length < 2) {
     if (r?.omaha && board.length < 3) return bestHand(hole, r);
     return bestHand([...hole, ...board], r);

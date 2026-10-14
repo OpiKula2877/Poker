@@ -167,6 +167,14 @@ export class ClientRoom {
     this.send({ t: 'action', action });
   }
 
+  sendDiscard(idx: number[]) {
+    this.send({ t: 'discard', idx });
+  }
+
+  sendBuyCard() {
+    this.send({ t: 'buycard' });
+  }
+
   sendAck() {
     this.send({ t: 'ack' });
   }

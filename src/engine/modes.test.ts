@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { decideBotAction } from '../bots/bot';
+import { botExchange, decideBotAction } from '../bots/bot';
 import { computeHint } from '../bots/hints';
-import { createRng, parseCards } from './cards';
+import { cardId, createRng, parseCards } from './cards';
 import { bestHandFor, CAT } from './evaluator';
 import { EVENTS, drawEvent, rulesForEvent } from './events';
 import {
@@ -15,9 +15,13 @@ import {
   legalActions,
   makeBlindLevels,
   rebuy,
+  buyCard,
+  canBuyCard,
+  exchangeCards,
   startHand,
 } from './game';
-import { DEFAULT_RULES } from './rules';
+import { DEFAULT_RULES, boardTotal } from './rules';
+import { viewFor } from '../net/protocol';
 
 const rulesOf = (id: string) => rulesForEvent(EVENTS.find((e) => e.id === id)!, createRng(1));
 
@@ -88,7 +92,12 @@ function play(config: GameConfig, hands: number, seed: number, check?: (s: GameS
     now += 5_000;
     if (s.phase === 'waiting' || s.phase === 'handEnd') s = startHand(s, now);
     else if (s.phase === 'roundEnd') s = advance(s, now);
-    else if (s.phase === 'betting') s = applyAction(s, s.toActId!, decideBotAction(s, s.toActId!, rng), now);
+    else if (s.phase === 'exchange') s = exchangeCards(s, s.pendingExchange[0], botExchange(s, s.pendingExchange[0]), now);
+    else if (s.phase === 'betting') {
+      const id = s.toActId!;
+      if (canBuyCard(s, id) && rng() < 0.4) s = buyCard(s, id);
+      s = applyAction(s, id, decideBotAction(s, id, rng), now);
+    }
     else break;
     check?.(s);
     const bought = s.players.reduce((a, p) => a + p.buyIns, 0) * config.startStack;
@@ -108,8 +117,18 @@ describe('každá Game Changer karta odehraje ruce bez chyby', () => {
         if (s.rules.eventId !== e.id) return;
         saw = true;
         maxBoard = Math.max(maxBoard, s.board.length);
-        expect(s.board.length).toBeLessThanOrEqual(s.rules.boardCards);
-        for (const p of s.players) if (p.inHand) expect(p.hole.length).toBe(s.rules.holeCards);
+        expect(s.board.length).toBeLessThanOrEqual(boardTotal(s.rules));
+        for (const p of s.players) {
+          if (!p.inHand || p.folded) continue;
+          const r = s.rules;
+          if (r.roulette) {
+            expect(p.hole.length).toBeGreaterThanOrEqual(1);
+            expect(p.hole.length).toBeLessThanOrEqual(5);
+          } else {
+            const base = r.holeSchedule ? r.holeSchedule[Math.min(s.round, r.holeSchedule.length - 1)] : r.holeCards;
+            expect(p.hole.length).toBe(base + (s.boughtCard.includes(p.id) ? 1 : 0));
+          }
+        }
         if (s.rules.shortDeck) for (const c of [...s.board, ...s.deck]) expect(c.r).toBeGreaterThanOrEqual(6);
       });
       expect(saw).toBe(true);
@@ -232,5 +251,122 @@ describe('Game Changer čeká na potvrzení', () => {
   it('bez karty se nečeká', () => {
     const s = startHand(createGame(cfg({ seats: 3, gameChanger: { chance: 0 } }), humans, 8, 0), 0);
     expect(s.phase).toBe('betting');
+  });
+});
+
+
+describe('druhá série karet', () => {
+  const four = (id: string, seed = 9) => createGame(cfg({ gameChanger: { chance: 1, events: [id] } }), bots(4), seed, 0);
+  /** Všichni jen dorovnávají / checkují až do konce ruky. */
+  const callDown = (start: GameState) => {
+    let s = start;
+    for (let i = 0; i < 400 && s.phase !== 'handEnd' && s.phase !== 'gameOver'; i++) {
+      if (s.phase === 'roundEnd') s = advance(s, 0);
+      else if (s.phase === 'exchange') s = exchangeCards(s, s.pendingExchange[0], [], 0);
+      else if (s.phase === 'betting') s = applyAction(s, s.toActId!, { type: 'call' }, 0);
+    }
+    return s;
+  };
+
+  it('Skrytá river: hráč ji nevidí, dokud ruka neskončí', () => {
+    let s = startHand(four('hiddenRiver'), 0);
+    while (s.board.length < 5 && s.phase !== 'handEnd') {
+      s = s.phase === 'roundEnd' ? advance(s, 0) : applyAction(s, s.toActId!, { type: 'call' }, 0);
+    }
+    expect(s.board.length).toBe(5);
+    expect(viewFor(s, 'p0').board[4].r).toBe(0);
+    expect(viewFor(s, 'p0').board[3].r).toBeGreaterThan(0);
+    s = callDown(s);
+    expect(viewFor(s, 'p0').board[4].r).toBeGreaterThan(0);
+  });
+
+  it('Obrácené rozdávání: 2 karty na stole, 0 v ruce, pak 3 / 4 / 5', () => {
+    let s = startHand(four('reverseDeal'), 0);
+    expect(s.board.length).toBe(2);
+    expect(s.players.every((p) => p.hole.length === 0)).toBe(true);
+    const seen: number[] = [];
+    while (s.phase !== 'handEnd') {
+      if (s.phase === 'roundEnd') {
+        s = advance(s, 0);
+        if (s.phase !== 'handEnd') seen.push(s.players[0].hole.length);
+      } else s = applyAction(s, s.toActId!, { type: 'call' }, 0);
+    }
+    expect(seen).toEqual([3, 4, 5]);
+    expect(s.board.length).toBe(5);
+  });
+
+  it('Deset karet: na konci 10 karet na stole', () => {
+    expect(callDown(startHand(four('tenBoard'), 0)).board.length).toBe(10);
+  });
+
+  it('Rychlý flop: flop leží hned', () => {
+    expect(startHand(four('quickFlop'), 0).board.length).toBe(3);
+  });
+
+  it('Draw: po prvním sázení výměna, vyměněné karty jsou nové', () => {
+    let s = startHand(four('draw'), 0);
+    while (s.phase === 'betting') s = applyAction(s, s.toActId!, { type: 'call' }, 0);
+    s = advance(s, 0);
+    expect(s.phase).toBe('exchange');
+    const id = s.pendingExchange[0];
+    const before = s.players.find((p) => p.id === id)!.hole.slice();
+    s = exchangeCards(s, id, [0, 1, 0, 5], 0); // duplikáty a nesmysly se ignorují
+    const after = s.players.find((p) => p.id === id)!.hole;
+    expect(after.length).toBe(2);
+    expect(after[0]).not.toEqual(before[0]);
+    expect(after[1]).not.toEqual(before[1]);
+    while (s.phase === 'exchange') s = exchangeCards(s, s.pendingExchange[0], [], 0);
+    expect(s.phase).toBe('roundEnd');
+    expect(advance(s, 0).board.length).toBe(3);
+  });
+
+  it('Dokup kartu: +1 karta za 1 BB, jen jednou', () => {
+    let s = startHand(four('buyCard'), 0);
+    const id = s.toActId!;
+    const p0 = s.players.find((p) => p.id === id)!;
+    s = buyCard(s, id);
+    const p1 = s.players.find((p) => p.id === id)!;
+    expect(p1.hole.length).toBe(3);
+    expect(p1.stack).toBe(p0.stack - s.betUnit);
+    expect(canBuyCard(s, id)).toBe(false);
+    expect(chipTotal(s)).toBe(4 * 1500);
+  });
+
+  it('Zrcadlový pot: bank se dělí mezi všechny, kdo nesložili', () => {
+    const s = callDown(startHand(four('splitAll'), 0));
+    expect(s.showdown!.winners.length).toBe(4);
+  });
+
+  it('Hra pro dva: hrají jen blindy', () => {
+    const s = startHand(four('blindsOnly'), 0);
+    expect(s.players.filter((p) => !p.folded).map((p) => p.id).sort()).toEqual([s.sbId, s.bbId].sort());
+  });
+
+  it('Černá kočka: majitel zaplatí 2 BB, ostatní nevidí, která karta to je', () => {
+    const s = startHand(four('blackCat'), 0);
+    expect(s.rules.catCard).not.toBe('?');
+    const owner = s.players.find((p) => p.hole.some((c) => cardId(c) === s.rules.catCard))!;
+    expect(owner).toBeDefined();
+    const other = s.players.find((p) => p.id !== owner.id)!;
+    expect(viewFor(s, other.id).rules.catCard).toBe('?');
+    expect(viewFor(s, owner.id).rules.catCard).toBe(s.rules.catCard);
+    expect(chipTotal(s)).toBe(4 * 1500);
+  });
+
+  it('Déjà vu: druhý stůl a žetony sedí', () => {
+    const s = callDown(startHand(four('dejaVu'), 0));
+    expect(s.board2.length).toBe(5);
+    expect(chipTotal(s)).toBe(4 * 1500);
+  });
+
+  it('Eso dolů: A-2-3-4-5 je postupka, 10-J-Q-K-A ne', () => {
+    const r = rulesOf('aceLow');
+    expect(bestHandFor(parseCards('Ah 2c'), parseCards('3d 4s 5h 9c Kd'), r).cat).toBe(CAT.STRAIGHT);
+    expect(bestHandFor(parseCards('Ah Kc'), parseCards('Qd Js Th 2c 4d'), r).cat).not.toBe(CAT.STRAIGHT);
+  });
+
+  it('Otevřené karty: všichni vidí všechno', () => {
+    const s = startHand(four('openHands'), 0);
+    expect(viewFor(s, 'p0').players[1].hole).toEqual(s.players[1].hole);
   });
 });

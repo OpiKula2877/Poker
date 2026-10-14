@@ -1,5 +1,5 @@
 import { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
-import { decideBotAction } from '../bots/bot';
+import { botExchange, decideBotAction } from '../bots/bot';
 import { createRng, cryptoRandom, randomSeed, shuffle } from '../engine/cards';
 import {
   type Action,
@@ -8,6 +8,9 @@ import {
   type PlayerSetup,
   ackEvent,
   advance,
+  buyCard,
+  canBuyCard,
+  exchangeCards,
   applyAction,
   createGame,
   legalActions,
@@ -100,6 +103,18 @@ export function useEngine(initial: () => GameState, opts: EngineOptions) {
       // Odpojení hráči kartu potvrdit nemůžou – potvrdí se za ně.
       const gone = g.pendingAcks.filter((id) => optsRef.current.isAway?.(id));
       if (gone.length) timer = setTimeout(() => setGame((x) => gone.reduce((y, id) => ackEvent(y, id, Date.now()), x)), 300);
+    } else if (g.phase === 'exchange') {
+      // Draw: boti a odpojení hráči vymění hned, ostatní mají čas na tah.
+      const auto = g.pendingExchange.filter((id) => g.players.find((p) => p.id === id)?.isBot || optsRef.current.isAway?.(id));
+      if (auto.length) {
+        timer = setTimeout(
+          () => setGame((x) => auto.reduce((y, id) => exchangeCards(y, id, y.players.find((p) => p.id === id)?.isBot ? botExchange(y, id) : [], Date.now()), x)),
+          fast ? 300 : 900,
+        );
+      } else {
+        const left = turnSecondsOf(g) * 1000 - (Date.now() - g.turnStartedAt);
+        timer = setTimeout(() => setGame((x) => x.pendingExchange.reduce((y, id) => exchangeCards(y, id, [], Date.now()), x)), Math.max(0, left));
+      }
     } else if (g.phase === 'roundEnd') {
       const runout = g.players.some((p) => p.showCards) && g.street !== 'river';
       timer = setTimeout(() => setGame((x) => (x.phase === 'roundEnd' ? advance(x, Date.now()) : x)), runout ? 1300 : fast ? 450 : 750);
@@ -108,7 +123,16 @@ export function useEngine(initial: () => GameState, opts: EngineOptions) {
       const p = g.players.find((x) => x.id === id)!;
       if (p.isBot) {
         const delay = fast ? 250 + rng() * 400 : 550 + rng() * 950;
-        timer = setTimeout(() => setGame((x) => (x.phase === 'betting' && x.toActId === id ? tryApply(x, id, decideBotAction(x, id, rng)) : x)), delay);
+        timer = setTimeout(
+          () =>
+            setGame((x) => {
+              if (x.phase !== 'betting' || x.toActId !== id) return x;
+              // Dokup kartu: bot si občas přikoupí.
+              const y = canBuyCard(x, id) && rng() < 0.35 ? buyCard(x, id) : x;
+              return tryApply(y, id, decideBotAction(y, id, rng));
+            }),
+          delay,
+        );
       } else {
         const legal = legalActions(g, id);
         if (id === heroId && preAction && legal) {
@@ -139,6 +163,8 @@ export function useEngine(initial: () => GameState, opts: EngineOptions) {
   const actFor = useCallback((id: string, a: Action) => setGame((x) => tryApply(x, id, a)), []);
   const rebuyFor = useCallback((id: string) => setGame((x) => rebuy(x, id)), []);
   const ackFor = useCallback((id: string) => setGame((x) => ackEvent(x, id, Date.now())), []);
+  const exchangeFor = useCallback((id: string, idx: number[]) => setGame((x) => exchangeCards(x, id, idx, Date.now())), []);
+  const buyCardFor = useCallback((id: string) => setGame((x) => buyCard(x, id)), []);
   const act = useCallback((a: Action) => actFor(heroId, a), [actFor, heroId]);
 
   const togglePause = useCallback(() => {
@@ -159,7 +185,7 @@ export function useEngine(initial: () => GameState, opts: EngineOptions) {
     setPreAction(null);
   }, []);
 
-  return { game, act, actFor, rebuyFor, ackFor, paused, togglePause, preAction, setPreAction, reset };
+  return { game, act, actFor, rebuyFor, ackFor, exchangeFor, buyCardFor, paused, togglePause, preAction, setPreAction, reset };
 }
 
 // ---------- statistiky hráče ----------

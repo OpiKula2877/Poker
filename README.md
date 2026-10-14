@@ -12,7 +12,7 @@ Turnaj Texas Hold'em pro 2–9 hráčů v prohlížeči. Hraje se proti botům (
 - **Trénink s nápovědou** (jen proti botům) – šance na výhru, potřebná šance (pot odds), outy a doporučený tah.
 - **Game Changer** (dá se zapnout ke každému módu) – před rukou se vylosuje karta, která na jedno kolo změní pravidla. Jak často: každá ruka / často / občas.
 
-### Game Changer karty
+### Game Changer karty (40)
 
 | Karta | Vzácnost | Co dělá |
 | --- | --- | --- |
@@ -36,6 +36,26 @@ Turnaj Texas Hold'em pro 2–9 hráčů v prohlížeči. Hraje se proti botům (
 | All in nebo fold | vzácná | každá sázka je all in |
 | Výměna balancí | legendární | dva hráči si prohodí žetony |
 | Velké míchání | legendární | žetony všech hráčů se přehází |
+| Skryté sázky | běžná | sázky soupeřů a bank nejsou vidět až do konce ruky |
+| Eso dolů | běžná | eso je nejnižší karta (jednička) |
+| Špatný dealer | běžná | dealerem je hráč s nejmenším stackem |
+| Skrytá river | vzácná | river leží rubem až do vyhodnocení |
+| Draw poker | vzácná | po prvním sázení výměna až 2 karet z ruky |
+| Bounty | vzácná | vítěz dostane 1 BB od každého, kdo byl v ruce |
+| Rychlý flop | vzácná | flop leží na stole hned od začátku |
+| Dokup kartu | vzácná | před flopem jedna karta navíc za 1 BB |
+| Ruleta karet | vzácná | každý dostane náhodně 1–4 karty |
+| Hladovka | vzácná | kdo má méně než 5 BB, jde povinně all in |
+| Zrcadlový pot | vzácná | bank se dělí mezi všechny, kdo nesložili |
+| Hra pro dva | vzácná | hrají jen small a big blind |
+| Obrácené rozdávání | legendární | 2 karty na stole, 0 v ruce; pak do ruky 3, 1 a 1 |
+| Deset karet | legendární | 10 společných karet na stole |
+| Otevřené karty | legendární | všichni vidí karty všech |
+| Zemětřesení | legendární | stůl se otřese a karty se rozsypou (jen vzhled) |
+| Jackpot | legendární | výhra s jackpot kartou = 1 BB od každého u stolu |
+| Tma | legendární | nevidíš žetony ani sázky soupeřů |
+| Déjà vu | exotická | druhý stůl, bank se dělí na poloviny |
+| Černá kočka | exotická | kdo má kočku v ruce, platí 2 BB do banku |
 
 V turnaji žádná karta žetony nepřidá ani neubere – jen je přesouvá.
 

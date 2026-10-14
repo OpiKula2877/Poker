@@ -327,3 +327,32 @@ kbd { font-family: inherit; font-size: 11px; font-weight: 700; border: 1px solid
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation: none !important; transition: none !important; }
 }
+
+/* ---------- Game Changer – druhá série ---------- */
+.board { align-items: flex-start; }
+.bslot { position: relative; display: flex; flex-direction: column; align-items: center; transition: transform .6s cubic-bezier(.2, .8, .2, 1); }
+.slot { transition: transform .6s cubic-bezier(.2, .8, .2, 1); }
+.blabel { position: absolute; bottom: -18px; font-size: 9px; font-weight: 700; letter-spacing: .1em; color: var(--muted); white-space: nowrap; }
+.blabel.gold { color: var(--amber); }
+.card.jackpot { box-shadow: 0 0 0 3px var(--amber); }
+.board2 { top: 452px; z-index: 3; align-items: center; animation: fadeUp .4s both; }
+.b2label { position: absolute; left: -84px; top: 34px; font-size: 10px; font-weight: 700; letter-spacing: .1em; color: var(--amber); }
+.card.pickable { cursor: pointer; }
+.card.pickable:hover { translate: 0 -6px; }
+.card.picked { outline: 3px solid var(--amber); outline-offset: 2px; translate: 0 -16px; }
+.card.cat::after { content: 'KOČKA'; position: absolute; left: 50%; top: -12px; transform: translateX(-50%); padding: 1px 6px; border-radius: 4px; background: #000; color: var(--amber); border: 1px solid var(--amber); font-size: 9px; font-weight: 700; letter-spacing: .1em; }
+.tablearea.dark .felt { background: #050303; transition: background .6s; }
+.tablearea.dark .rail { background: #0a0606; border-color: #1a0a0c; }
+.tablearea.dark .seat .plate { opacity: .45; }
+.tablearea.dark::after { content: ''; position: absolute; inset: 52px 0 152px 0; background: radial-gradient(circle at 50% 70%, transparent 160px, rgba(0, 0, 0, .7) 420px); pointer-events: none; z-index: 2; }
+.tablearea.quake { animation: quake .8s cubic-bezier(.36, .07, .19, .97) both; }
+@keyframes quake {
+  10%, 90% { translate: -2px 1px; }
+  20%, 80% { translate: 4px -2px; }
+  30%, 50%, 70% { translate: -8px 3px; }
+  40%, 60% { translate: 8px -3px; }
+}
+.gcreveal.exotic .face { border-color: #6b3fa0; background: #150a1c; animation: gcflip .7s cubic-bezier(.2, .8, .2, 1) both, exoglow 2.4s ease-in-out .7s infinite; }
+.gcreveal.exotic .kick { color: #c9a6ff; }
+.gcreveal.exotic .mark { border-color: #c9a6ff; color: #c9a6ff; }
+@keyframes exoglow { 0%, 100% { box-shadow: 0 0 0 0 rgba(155, 92, 255, 0); } 50% { box-shadow: 0 0 40px 6px rgba(155, 92, 255, .45); } }
