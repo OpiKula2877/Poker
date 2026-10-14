@@ -2,12 +2,12 @@
 
 Turnaj Texas Hold'em pro 2–9 hráčů v prohlížeči. Hraje se proti botům (i offline), nebo s přáteli přes odkaz. Vlastní server přijde.
 
-**Hrát:** https://opikula2877.github.io/Poker/
+**Hrát:** https://poker.opikula.dev
 
 ## Hra s přáteli přes odkaz
 
 1. V lobby zvol **Přes odkaz** a klikni na **Vytvořit stůl**.
-2. Pošli odkaz (např. `…/Poker/#K7F2Q`) ostatním. Kdo ho otevře, zadá jméno a sedne si ke stolu.
+2. Pošli odkaz (např. `https://poker.opikula.dev/#K7F2Q`) ostatním. Kdo ho otevře, zadá jméno a sedne si ke stolu.
 3. Až jsou všichni u stolu, klikni na **Spustit turnaj**. Volná místa můžou doplnit boti.
 
 Jak to funguje:
